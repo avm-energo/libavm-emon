@@ -14,11 +14,17 @@ protocol, plus one extra Mode 2 variant for sibling models ЭМ‑3.3Т1/ЭМ‑
 
 - Step 0 (doc analysis) — done.
 - Step 1 (planning files + protocol reconstruction) — done, this file.
-- Step 2 (Python skeleton) — done, see `src/python/emon/`.
-- **Next action:** run `src/python/scripts/00_find_crc.py` against a real
-  captured frame to pin down the CRC16 variant, then work through
-  `plan.md` step 4 in order (connect → device info → limits → analog
-  inputs), updating this file and `pseudocode.md` after each one.
+- Step 2 (Python skeleton) — done, see `src/python/emon/`, including the
+  `requirements.txt` install + import smoke-test (`pyserial` installs
+  cleanly, `emon` and all its submodules import with no errors, all 5
+  `scripts/*.py` parse `--help` without crashing) — no hardware needed.
+- **Next action:** everything from here needs the real device + USB-UART
+  bridge (`plan.md` step 3). Start with
+  `src/python/scripts/01_test_connect.py` to find the baud rate, then
+  `scripts/00_find_crc.py` against a real captured frame to pin down the
+  CRC16 variant, then work through `plan.md` step 3 in order (connect →
+  device info → limits → analog inputs), updating this file and
+  `pseudocode.md` after each one.
 
 ## Step 0 — Reading the vendor docs
 

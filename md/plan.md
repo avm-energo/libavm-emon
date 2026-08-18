@@ -23,8 +23,8 @@ status" section is the single resume point — check it first.
       `codecs.py`, `transport.py`, `device.py`.
 - [x] `src/python/scripts/`: one small manual-test script per function,
       plus a CRC-variant finder.
-- [ ] Fill in `requirements.txt` install + smoke-test that the package at
-      least imports cleanly (no hardware needed for this part).
+- [x] `requirements.txt` install + smoke-test that the package at least
+      imports cleanly (no hardware needed for this part).
 
 ## 3. Real-hardware validation (needs the USB-UART bridge + device)
 Work through in order — later steps depend on earlier ones (transport
