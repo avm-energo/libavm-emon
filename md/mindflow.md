@@ -94,11 +94,21 @@ follow-ups (see "Next action").
   for the investigation, including two dead ends (a program that needs
   exclusive USB access, and a capture that turned out to be tapping an
   unrelated device) before landing on the real answer.
+- Step 6 (C++ port: `libavm-emon` Qt/CMake shared library) — **done**,
+  `GetDeviceInfo`/`SetLimits`/`GetAnalogInputs` implemented against
+  `QSerialPort`, supporting both confirmed link types (RS-232 and USB)
+  via a `LinkType` enum rather than exposing raw baud/stop-bits. Verified
+  compiling cleanly (zero warnings) in both shared and static
+  configurations. Packaging/build conventions (deb/rpm `package/`
+  directory, `BUILD_SHARED_LIBS` switch, `emon_export.h`, the rest of the
+  CMake structure) ported from the sibling `libavm-gen` project for
+  consistency with other AVM-Energo C++ libraries. See "Step 6" below.
+  **Not yet validated against real hardware** - compiles cleanly, but no
+  C++ program has actually called it against the device yet.
 
-Repo layout note: Python sources moved from `src/python/` to `py/` to
-free up `src/` for the upcoming C++ port (see `plan.md` section 5); a
-Qt/CMake C++ library (`libavm-emon`) implementing `GetDeviceInfo`,
-`SetLimits`, and `GetAnalogInputs` is next, see `plan.md` section 7.
+Repo layout note: Python sources moved from `src/python/` to `py/` in
+this same push, to free up `src/` for the new C++ port (see `plan.md`
+section 5).
 
 ## Step 0 — Reading the vendor docs
 
@@ -930,6 +940,104 @@ short; a plain retry succeeded cleanly).
   `get_analog_inputs()` could be run against COM11 directly. Low
   priority given the C++ port is next and will need this parameterization
   anyway.
+
+## Step 6 — C++ port: `libavm-emon` Qt/CMake shared library (2026-08-19)
+
+Repo restructured for this: Python sources moved `src/python/` → `py/`
+(commit `ab2ec6a`) to free up `src/` for C++, and `src/`/`include/` now
+hold the new C++ project instead.
+
+**Scope, deliberately narrow**: only `GetDeviceInfo`, `SetLimits`, and
+`GetAnalogInputs` are implemented (not the full Python surface -
+`set_current_limits` verification-via-Mode-3-footer, the CRC-finder
+script, the sniffer, etc. stay Python-only for now). Same
+frame/CRC/codec/field-offset logic as the Python implementation, ported
+directly - every correction found in Steps 4.3-4.5 (RMS/frequency/angle
+offsets, the power-field word order, degrees-not-radians) carried over
+with a comment pointing back to the relevant step.
+
+**Structure**:
+```
+CMakeLists.txt                    project(libavm-emon), target "libavm-emon"
+include/libavm-emon/
+  emon_export.h                   EMON_EXPORTS/EMON_IMPORTS/HAVE_STATIC_BUILD macro
+  Exceptions.h                    ProtocolError, DeviceError
+  Types.h                         LinkType, DeviceInfo, AppliedLimits, AnalogInputs
+  Device.h                        public Device class
+src/
+  Constants.h                     mode numbers, confirmed field offsets
+  Crc.h/.cpp                      CRC-16/XMODEM
+  Codecs.h/.cpp                   fixed-point/ASCII/power-field decoders
+  Frame.h/.cpp                    request/response framing
+  Transport.h/.cpp                QSerialPort transport, both link types, retry mitigation
+  Device.cpp                      GetDeviceInfo / SetLimits / GetAnalogInputs
+package/, cmake/, VERSION.in      packaging - see below
+```
+
+**API design choice**: `Device`'s constructor takes a `LinkType` enum
+(`Rs232` or `Usb`) rather than raw baud-rate/stop-bits parameters. It
+maps directly to the two parameter sets actually confirmed against real
+hardware (115200 8N1 for RS-232 per Step 3.1, 3,000,000 8N2 for USB per
+Step 5) - there's deliberately no way to pass an untested combination.
+`Transport::request()` carries over the Step 4.6 retry-on-timeout
+mitigation (default `retries=1`), since the occasional multi-second
+device-side stall was observed on both link types.
+
+**Build verified**: Qt 6.10.1 MSVC2022 64-bit (local install at
+`D:\qt\6.10.1\msvc2022_64`, no system-wide Qt or CMake was present on
+this machine otherwise - used VS2022 Community's bundled CMake/MSVC
+toolchain). Configured via the Visual Studio 17 2022 generator, built via
+MSBuild. **Zero compiler warnings or errors**, including no MSVC C4275
+(dll-interface base class) warning on the `Exception` hierarchy's
+`std::runtime_error` base, which was a specific worry given it's exported
+across the DLL boundary.
+
+**Packaging conventions ported from the sibling `libavm-gen` project**
+(same organization, AVM-Energo, different repo - left entirely untouched
+per instruction), for consistency with their other C++ libraries:
+
+- `BUILD_SHARED_LIBS` switch: shared build defines `EMON_EXPORTS`
+  (build)/`EMON_IMPORTS` (consumers); static build defines
+  `HAVE_STATIC_BUILD` instead. Verified both configurations actually
+  build correctly (shared -> `.dll`+`.lib`+`.exp`; static -> `.lib` only,
+  no `.dll`). **Note**: this switches the *default* from the original
+  ask's "shared library" to CMake's native `BUILD_SHARED_LIBS` default
+  (OFF, i.e. static) unless explicitly passed `-DBUILD_SHARED_LIBS=ON` -
+  a real behavior change from the first cut of this project, flagged to
+  the user, not yet resolved either way (their call whether to add
+  `option(BUILD_SHARED_LIBS ... ON)` to flip the default back).
+- `include/avm_emon/` renamed to `include/libavm-emon/` to match
+  `libavm-gen`'s convention of install-path folder name = package name.
+  The C++ `namespace avm_emon` itself is untouched - matches how the
+  reference project keeps its own namespaces (`Files`, `Colors`,
+  `Error`, ...) independent of the `libavm-gen` folder name; namespace
+  identifiers can't contain hyphens anyway, so this was never going to be
+  a 1:1 rename.
+  `Global.h` renamed to `emon_export.h`, `#if defined(...)` control
+  macros renamed to `EMON_EXPORTS`/`EMON_IMPORTS` (matching `libavm-gen`'s
+  `GEN_EXPORTS`/`GEN_IMPORTS` short-name pattern); kept the actual export
+  macro's own name as `AVM_EMON_EXPORT` since it was already used across
+  every public header before this pass.
+- `package/src/{debian,debian-dev}/{control.in,changelog,substvars}` and
+  `package/src/rpm/rpmbuild/{BUILD,BUILDROOT,RPMS,SOURCES,SRPMS}/.gitkeep`
+  + `SPECS/libavm-emon.spec` - structurally identical to `libavm-gen`,
+  content adapted (package name/description; `Maintainer: AVM-Energo
+  <support@avmenergo.ru>` and `License: GPLv3` copied as-is since they're
+  evidently this org's standing convention, not verified against this
+  specific project - flagged to the user as an assumption).
+- `cmake/arch/{amd64,arm64,armhf}.cmake` (Linux clang cross-compile
+  toolchains) copied verbatim - nothing in them is project-specific.
+- `cmake/libavm-emonConfig.cmake.in`, `VERSION.in` -> `package/src/VERSION`
+  at configure time, `avm-energo::libavm-emon` alias target,
+  `VERSION`/`SOVERSION`/`PREFIX ""` target properties, `install()` +
+  `Config.cmake`/`ConfigVersion.cmake` generation - all structurally
+  identical to `libavm-gen`.
+
+**Not yet done**: running the compiled library against real hardware
+(compiles cleanly, but nothing has actually called `Device::getDeviceInfo()`
+etc. from C++ yet - would need a small test executable, or linking it
+into a consuming project). `.gitignore` extended with C++/Qt/MSVC
+build-artifact patterns merged in from `libavm-gen`'s.
 
 ## Open questions for hardware validation (step 4)
 

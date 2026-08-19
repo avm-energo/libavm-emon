@@ -112,22 +112,29 @@ stop-bit count nobody had tried together).
       device.
 
 ## 7. C++ port
-- [ ] 7.1 Qt CMake project named `libavm-emon` at the repo root: shared
+- [x] 7.1 Qt CMake project named `libavm-emon` at the repo root: shared
       library target, public headers in `include/`, implementation in
-      `src/`.
-- [ ] 7.2 Implement `GetDeviceInfo`, `SetLimits`, and `GetAnalogInputs`
+      `src/`. Done, plus packaging/build conventions (deb/rpm `package/`,
+      `BUILD_SHARED_LIBS` switch, `emon_export.h`) ported from the
+      sibling `libavm-gen` project — see `mindflow.md` "Step 6".
+- [x] 7.2 Implement `GetDeviceInfo`, `SetLimits`, and `GetAnalogInputs`
       only (not the full Python surface) — same frame/CRC/codec/field
       logic already validated in Python, ported to C++/`QSerialPort`.
-      Transport needs to support both confirmed serial parameter sets
-      (RS-232: 115200 8N1; USB: 3,000,000 baud 8N2 — see step 6), plus
-      the automatic-retry-on-timeout mitigation from Step 4.6 (occasional
-      multi-second device-side stall, same on both interfaces).
-- [ ] 7.3 Verify the CMake project configures and compiles successfully
+      Transport supports both confirmed serial parameter sets via a
+      `LinkType` enum (RS-232: 115200 8N1; USB: 3,000,000 baud 8N2 — see
+      step 6), plus the automatic-retry-on-timeout mitigation from Step
+      4.6 (occasional multi-second device-side stall, same on both
+      interfaces).
+- [x] 7.3 Verify the CMake project configures and compiles successfully
       (Qt 6.10.1 MSVC2022 64-bit kit, already located locally at
-      `D:\qt\6.10.1\msvc2022_64`).
+      `D:\qt\6.10.1\msvc2022_64`). Done — zero warnings, both shared and
+      static `BUILD_SHARED_LIBS` configurations verified to build
+      correctly.
 - [ ] 7.4 Validate the compiled C++ library against the real device —
       both over RS-232 and over USB, since they need different transport
-      parameters.
+      parameters. **Not yet done** — compiles cleanly but hasn't actually
+      been run against hardware; needs a small test executable or a
+      consuming project to link against it.
 
 ## Known unimplemented / out of scope for now
 - Mode 19 (set reduction coefficients) — doc section is missing entirely,

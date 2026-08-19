@@ -1,0 +1,5 @@
+libavm-emon-dev (1.0.0) unstable; urgency=low
+
+  [+] Initial release: GetDeviceInfo, SetLimits, GetAnalogInputs over RS-232 and USB
+
+ -- AVM-Energo <support@avmenergo.ru>  Wed, 19 Aug 2026 00:00:00 +0300

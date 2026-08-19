@@ -1,0 +1,9 @@
+Source: libavm-emon-dev
+Priority: optional
+Maintainer: AVM-Energo <support@avmenergo.ru>
+Section: devel
+
+Package: libavm-emon-dev
+Description: EM-3.1KM (EMon) power-quality meter protocol library for AVM-Energo projects development files
+Architecture: amd64
+Depends: ${shlibs:Depends}
