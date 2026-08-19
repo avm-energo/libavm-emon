@@ -58,20 +58,23 @@ follow-ups (see "Next action").
   validation) — **done; found and fixed two real off-by-one-word bugs in
   the doc-derived field table** (RMS and frequency), confirmed against
   the meter's own front-panel display as ground truth — see "Step 4.3"
-  below. Angle's offset is now suspect too but unresolved — needs a load
-  with a known non-trivial phase angle to test, unlike the near-resistive
-  load used here.
-- **Next action:** (1) validate/fix the angle field offset with an
-  inductive or capacitive test load (near-zero expected angle from a
-  resistive load can't distinguish "correct and genuinely ~0" from "wrong
-  offset, coincidentally small") — see "Step 4.3"; (2) resolve the
-  SW-version field encoding (real raw words known: `0x0702`, `0x0153` —
-  doesn't decode cleanly under the DAA hypothesis, still open); (3)
-  individually reverify fields 6-19's offsets (only 5 and 11 were
-  checked; if the doc miscounted a field width before field 5, everything
-  from 6 onward inherits the same +1 shift unless proven otherwise - not
-  yet checked field by field). See "Open questions" below for the full
-  list with detail.
+  below.
+- Step 4.4 (inductive load on phase A, angle field validation) — **done;
+  found and fixed a third off-by-one-word bug** (angle), plus discovered
+  the field's unit is degrees, not radians — see "Step 4.4" below. All 3
+  of the offset bugs findable this way (RMS, frequency, angle) are now
+  fixed and hardware-confirmed.
+- **Next action:** (1) resolve the SW-version field encoding (real raw
+  words known: `0x0702`, `0x0153` — doesn't decode cleanly under the DAA
+  hypothesis, still open); (2) individually reverify fields 6-10 and
+  13-19's offsets (only 5, 11, and 33 were checked; if the doc miscounted
+  a field width before field 5, everything from 6 onward inherits the
+  same shift unless proven otherwise — not yet checked field by field);
+  (3) a transient short-read TimeoutError was observed twice during Step
+  4.4 (`_read_exact` got 1-3 bytes fewer than the declared 4538-byte
+  frame length) — not investigated, likely worth a retry-once or a
+  slightly longer default timeout in `transport.py` if it recurs. See
+  "Open questions" below for the full list with detail.
 
 ## Step 0 — Reading the vendor docs
 
@@ -625,6 +628,53 @@ frequency=49.4340` - consistent with the scan, confirming the fix flows
 through the real code path, not just the ad hoc diagnostic scripts used
 to find it.
 
+## Step 4.4 — Inductive load on phase A: angle field validation (2026-08-19)
+
+Step 4.3 left the angle field (11) unresolved because the resistive test
+load's near-zero expected phase angle couldn't distinguish a correct
+offset from a wrong one that happened to look small. Connected an
+inductive load to phase A instead and got a real, non-trivial front-panel
+reading to test against: **Ia=0.499563A, Ua=13.0325V,
+phi(Ua-Ia)=-45.63deg**.
+
+First pass (still using the old offset 216) reproduced the same kind of
+garbage seen in Step 4.3 (`phi≈24374`, nowhere near -45.63 in any unit).
+Scanned the whole Ia channel block for a value matching -45.63 (both as
+degrees directly and as radians, converted): **word offset 215 (signed,
+frac_bits=16) → -45.96 deg**, matching the front panel to within ~0.7% -
+good enough to be confident given real measurement noise, and dramatically
+better than every other offset/format combination tried (nothing else
+came within an order of magnitude). `FIELD11_ANGLE_UI_WORD_OFFSET` fixed
+204+11→**215** in `constants.py` (was 216 - a **-1** word shift, same
+direction as frequency's fix, opposite RMS's +1 - reinforcing that these
+are 3 independent transcription errors in the original doc-derived
+tables, not one systematic bug).
+
+**Also discovered the field's physical unit is degrees, not radians** -
+the raw decode naturally comes out matching the front panel's degree
+reading directly (no `math.radians`/`math.degrees` conversion needed).
+`device.py`'s `AnalogInputs.phi_*` fields and `04_test_get_analog_inputs.py`'s
+print statements previously assumed/labelled radians; both corrected.
+
+Bonus: `Ib`/`Ic` (phases with no signal connected) now read as small
+nonzero noise (~1 deg) at the corrected offset, rather than the suspicious
+exact `0.0000` the old offset gave — consistent with genuinely hitting
+live measurement circuitry picking up ADC noise floor, rather than empty
+reserved memory. Further circumstantial support for the fix, on top of
+the direct front-panel match.
+
+This test also doubled as a second independent RMS/frequency data point
+at different magnitudes than Step 4.3 (13.03V/0.4996A/49.37Hz here vs.
+10.02V/0.0998A/49.43Hz there) - both self-consistent with their
+respective front-panel readings, reinforcing Step 4.3's fixes weren't a
+single-point coincidence.
+
+One unrelated observation during this test: `_read_exact` hit a
+short-read `TimeoutError` twice (got 4535 or 4537 bytes of a declared
+4538-byte frame, even with `--timeout 8`) - a transient serial reliability
+quirk, not a decode issue; a plain retry succeeded both times. Not
+investigated further; flagged in "Current status" next-action.
+
 ## Open questions for hardware validation (step 4)
 
 1. ~~Which CRC16 variant?~~ **Resolved** — CRC-16/XMODEM, big-endian on
@@ -646,15 +696,14 @@ to find it.
    ÷1048576)?~~ **Resolved** — the default 12/20 split (÷1048576) is
    correct; the real bug was the field's *word offset* (204 vs the
    correct 205), not the frac_bits split. See "Step 4.3".
-5b. Is field 11 (angle)'s word offset also off, the way field 5's and
-   field 33's were? **Open, genuinely unresolved** — the Step 4.3 test
-   load was near-resistive, so the expected near-zero angle can't
-   distinguish a correct offset from a wrong one that happens to look
-   small. Needs a load with a known non-trivial phase angle. See "Step
-   4.3".
-5c. Are fields 6-19's offsets also shifted by the same +1 word that field
-   5 needed? Not individually reverified — only 5 and 11 were checked
-   against real hardware so far. See "Step 4.3".
+5b. ~~Is field 11 (angle)'s word offset also off?~~ **Resolved** — yes,
+   -1 word (216→215), plus the unit is degrees not radians. Confirmed
+   with an inductive load (-45.63deg front panel vs. -45.96deg decoded).
+   See "Step 4.4".
+5c. Are fields 6-10/13-19's offsets also shifted, the way 5/11/33 all
+   turned out to need independent shifts? Not individually reverified —
+   only 5, 11, and 33 have been checked against real hardware so far. See
+   "Step 4.3"/"Step 4.4".
 6. What mode number does the vendor program actually send for the request
    side? Not directly observed across two 2026-08-19 captures (150s
    total, including a live reconnect) — see "Step 3.2/3.3" and "Step

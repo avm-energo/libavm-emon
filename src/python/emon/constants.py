@@ -47,15 +47,16 @@ FIELD5_RMS_WORD_OFFSET = 205
 # Word offset of field 11 ("угол u^i") inside a channel block. Only
 # meaningful in the I blocks (Ia, Ib, Ic); reserved but unused in U blocks.
 #
-# UNRESOLVED (md/mindflow.md "Step 4.3"): given the field 5 correction
-# above, this offset is now suspect too, but the same hardware test
-# couldn't confirm or rule out a shift here - the test load was
-# near-resistive (cos(phi) measured ~1.0 elsewhere in the payload), so the
-# expected true angle is near zero either way, which doesn't discriminate
-# between "correct offset, genuinely ~0" and "wrong offset, reading
-# garbage that happens to look small". Needs a load with a known
-# non-trivial phase angle (inductive/capacitive) to actually validate.
-FIELD11_ANGLE_UI_WORD_OFFSET = 216
+# CORRECTED against real hardware (md/mindflow.md "Step 4.4"): an
+# inductive load on phase A gave a real, non-trivial front-panel phase
+# reading (-45.63 deg) to test against - offset 216 (documented) read as
+# nonsense (~24000+); scanning found offset 215 (signed, frac_bits=16)
+# decodes to -45.96 deg, matching the front panel to within ~0.7%. Same
+# -1 word shift direction as field 33 (frequency); opposite field 5
+# (RMS)'s +1 shift - independent transcription errors, not one bug.
+# **The value is in DEGREES, not radians** - `device.py`'s `phi_*`
+# fields and this comment previously assumed radians; see its docstring.
+FIELD11_ANGLE_UI_WORD_OFFSET = 215
 # Word offset of field 33 ("частота") inside the footer section.
 #
 # CORRECTED against real hardware (md/mindflow.md "Step 4.3"): scanning

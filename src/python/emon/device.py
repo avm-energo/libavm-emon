@@ -47,6 +47,11 @@ class AnalogInputs:
     Ub: float
     Uc: float
     frequency: float
+    # DEGREES, not radians - confirmed against a real inductive-load test,
+    # see mindflow.md "Step 4.4". `decode_signed_fixed`'s frac_bits=16
+    # format guess was right; the field's physical unit was the wrong
+    # assumption, inherited from the "угол"/"angle" field name without a
+    # hardware check.
     phi_ia_ua: float
     phi_ib_ub: float
     phi_ic_uc: float

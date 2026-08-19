@@ -35,15 +35,14 @@ def main() -> None:
     finally:
         device.disconnect()
 
-    print(f"Ia = {values.Ia:.4f} A   Ua = {values.Ua:.4f} V   phi(Ia/Ua) = {values.phi_ia_ua:.4f} rad")
-    print(f"Ib = {values.Ib:.4f} A   Ub = {values.Ub:.4f} V   phi(Ib/Ub) = {values.phi_ib_ub:.4f} rad")
-    print(f"Ic = {values.Ic:.4f} A   Uc = {values.Uc:.4f} V   phi(Ic/Uc) = {values.phi_ic_uc:.4f} rad")
+    print(f"Ia = {values.Ia:.4f} A   Ua = {values.Ua:.4f} V   phi(Ia/Ua) = {values.phi_ia_ua:.4f} deg")
+    print(f"Ib = {values.Ib:.4f} A   Ub = {values.Ub:.4f} V   phi(Ib/Ub) = {values.phi_ib_ub:.4f} deg")
+    print(f"Ic = {values.Ic:.4f} A   Uc = {values.Uc:.4f} V   phi(Ic/Uc) = {values.phi_ic_uc:.4f} deg")
     print(f"frequency = {values.frequency:.4f} Hz")
     print()
     print("RMS values (Ia/Ib/Ic/Ua/Ub/Uc) are the device's raw pre-calibration")
     print("reading, not its own front-panel's calibrated value - see get_analog_inputs()'s")
-    print("docstring. phi's field offset is still unconfirmed against real hardware -")
-    print("see mindflow.md \"Step 4.3\", open question 5b.")
+    print("docstring.")
 
 
 if __name__ == "__main__":
