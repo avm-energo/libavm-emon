@@ -23,10 +23,11 @@ status" section is the single resume point — check it first.
       `codecs.py`, `transport.py`, `device.py`.
 - [x] `src/python/scripts/`: one small manual-test script per function,
       plus a CRC-variant finder.
-- [x] Smoke-tested that the package imports cleanly and the codecs/frame
-      logic is internally consistent (unit-style checks run inline, no
-      hardware needed for this part — see mindflow.md's signed-field
-      decoding correction, caught this way).
+- [x] `requirements.txt` install + smoke-test that the package imports
+      cleanly and the codecs/frame logic is internally consistent
+      (unit-style checks run inline, no hardware needed for this part —
+      see mindflow.md's signed-field decoding correction, caught this
+      way).
 
 ## 3. Real-hardware validation (needs the USB-UART bridge + device)
 Work through in order — later steps depend on earlier ones (transport

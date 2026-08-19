@@ -14,7 +14,10 @@ protocol, plus one extra Mode 2 variant for sibling models ЭМ‑3.3Т1/ЭМ‑
 
 - Step 0 (doc analysis) — done.
 - Step 1 (planning files + protocol reconstruction) — done, this file.
-- Step 2 (Python skeleton) — done, see `src/python/emon/`.
+- Step 2 (Python skeleton) — done, see `src/python/emon/`, including the
+  `requirements.txt` install + import smoke-test (`pyserial` installs
+  cleanly, `emon` and all its submodules import with no errors, all 5
+  `scripts/*.py` parse `--help` without crashing) — no hardware needed.
 - Step 3.1 (find baud rate) — in progress, but the real blocker turned
   out to be wiring topology, not baud. Full diagnosis in "Step 3" below;
   short version: multimeter measurements at the device's own DB9
