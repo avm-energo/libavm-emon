@@ -107,7 +107,18 @@ follow-ups (see "Next action").
   missing DTR/RTS assertion, and characterizing a genuine USB-link
   large-transfer stall also present in the reference Python
   implementation) before all three functions were confirmed working
-  correctly over both RS-232 and USB.
+  correctly over both RS-232 and USB. "Step 6.2" adds `examples/`,
+  `README.md`, `.gitlab-ci.yml`, and a nice unplanned validation: the
+  library correctly detected a deliberate live wiring-scheme change on
+  the device through two independent read paths.
+
+**Hardware state note**: the physical meter is currently configured for
+**1-phase-2-wire** (`wiring_scheme = 0b100`), not the 3-phase-4-wire
+(`0b001`) baseline referenced throughout most of this document (Steps
+4.2 onward) - changed deliberately during Step 6.2's validation and left
+that way at the user's request. Anyone resuming hardware work should
+expect `wiring_scheme` and any wiring-dependent readings to reflect this,
+not the older baseline.
 
 Repo layout note: Python sources moved from `src/python/` to `py/` in
 this same push, to free up `src/` for the new C++ port (see `plan.md`
@@ -1153,6 +1164,36 @@ RS-232 hardware validation had to stop mid-session (the test cable
 became unavailable), but the three functions were already confirmed
 working correctly over RS-232, repeatedly, before that happened - see
 above.
+
+## Step 6.2 — Examples + docs, and a live device-state confirmation (2026-08-19)
+
+Added `examples/` (three focused, runnable programs - `get_device_info`,
+`get_analog_inputs`, `set_limits` - distinct from `tests/manual/`'s
+diagnostic swiss-army-knife tool), a `README.md` (structure modeled on
+the `coma` project's, scaled to this library's size), and `.gitlab-ci.yml`
+(structure mirrored from `libavm-gen`'s - same job names/images/MinGW
+cross-compile approach, flagged as untested whether those CI images
+actually have `Qt6SerialPort` available, since `libavm-gen`'s own comment
+only lists "Qt6 base+svg"). All three examples build cleanly and were
+smoke-tested against real hardware over USB.
+
+While smoke-testing, `set_limits`'s echoed `wiring_scheme` came back as
+`0b100` (1-phase-2-wire) instead of the `0b001` (3-phase-4-wire) seen
+consistently everywhere else in this whole document - unprompted by
+anything this session had done, since `wiring_scheme` is read back from
+the device's own state, not one of the values a `SetLimits` call
+actually sends. Flagged this to the user rather than assuming a bug; it
+turned out to be a deliberate test - they'd changed the meter's physical
+wiring configuration specifically to check whether the library would
+pick it up correctly. It did, through two independent paths that agreed
+with each other: `SetLimits`'s echoed `wiring_scheme`, and separately
+`GetAnalogInputs`'s Ib/Ic phase angles reading exact `0.0000` deg
+(consistent with those channels being genuinely unmeasured in
+single-phase mode, rather than the small ADC noise floor seen throughout
+prior sessions when phases were wired but simply unloaded - e.g. Step
+4.4). Reconfirmed stable across a second independent pair of calls. Left
+in the 1-phase-2-wire configuration at the user's request - not restored
+to the earlier 3-phase-4-wire baseline.
 
 ## Open questions for hardware validation (step 4)
 
