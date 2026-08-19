@@ -23,16 +23,54 @@ status" section is the single resume point — check it first.
       `codecs.py`, `transport.py`, `device.py`.
 - [x] `src/python/scripts/`: one small manual-test script per function,
       plus a CRC-variant finder.
-- [ ] Fill in `requirements.txt` install + smoke-test that the package at
-      least imports cleanly (no hardware needed for this part).
+- [x] Smoke-tested that the package imports cleanly and the codecs/frame
+      logic is internally consistent (unit-style checks run inline, no
+      hardware needed for this part — see mindflow.md's signed-field
+      decoding correction, caught this way).
 
 ## 3. Real-hardware validation (needs the USB-UART bridge + device)
 Work through in order — later steps depend on earlier ones (transport
 before framing, framing before any command).
 
-- [ ] 3.1 Determine serial parameters (baud/parity/stop bits) empirically.
-      `scripts/01_test_connect.py` — try candidate bauds until the device
+- [~] 3.1 Determine serial parameters (baud/parity/stop bits) empirically.
+      `scripts/01_test_connect.py` — first `--loopback` (TX jumpered to
+      RX on the adapter, device disconnected) to confirm the PC/adapter
+      side works independent of device wiring, THEN `--probe` with the
+      device attached, trying candidate bauds until the device
       responds instead of timing out.
+      **Blocked pending a physical hardware check** — loopback passed,
+      but an exhaustive software sweep (9 bauds × 3 parities × 2
+      stopbits, and 9 bauds × 6 CRC variants, in both TX/RX wiring
+      orientations = 216 combos) plus a raw-byte burst test produced zero
+      response and zero visible reaction from the device in every case.
+      Baud/parity/CRC/wiring-polarity are effectively ruled out as the
+      sole explanation; see mindflow.md "Step 3" for the remaining
+      suspects (bad connection, wrong pins, voltage-level mismatch, wrong
+      port) — all of which need the user's hands (multimeter, visual
+      inspection of the connector) rather than more script runs.
+      Multimeter readings at the device's own connector found it drives
+      pin 2 with a genuine RS-232 signal (DCE-style, opposite of PC/DTE)
+      — rewired straight pin2↔pin2/pin3↔pin3/pin5↔pin5 accordingly and
+      repeated the full sweep + burst test on that wiring too: still
+      zero response, zero reaction. Remaining suspects: pin 3 isn't
+      actually the device's RXD despite the elimination logic, a
+      hardware handshake line (DTR/RTS) gating the receiver that our
+      3-wire link doesn't provide, or the wrong physical port on the
+      device entirely.
+      **Also tried the device's own USB port** (enumerates as a genuine
+      FTDI FT232R bridge, `/dev/ttyUSB0`, no RS-232 electrical concerns
+      at all) with the same full sweep + burst test — also zero response,
+      zero reaction. See mindflow.md "Step 3" for the full blow-by-blow —
+      **270+ combinations tried across two RS-232 wiring topologies and
+      USB, all silent.**
+      **Strategy change:** user located the vendor's original PC
+      software (Windows-only) and is moving to a Windows machine to run
+      it against the real device and capture ground-truth traffic
+      instead of continuing blind sweeps here — see mindflow.md's
+      "Capture checklist for the Windows session" for exactly what to
+      bring back (real baud rate + a raw hex request/response capture)
+      and how it plugs directly into `crc.guess_crc16()` and
+      `SerialTransport`.
 - [ ] 3.2 Determine the CRC16 variant. `scripts/00_find_crc.py` — capture
       one real request/response pair (e.g. Mode 3 with no payload, cheap
       to send) and brute-force which candidate variant reproduces the

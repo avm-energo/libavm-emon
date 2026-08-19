@@ -12,16 +12,29 @@ import serial
 
 DEFAULT_BAUDRATE = 9600  # UNVERIFIED GUESS, see module docstring
 DEFAULT_TIMEOUT_S = 2.0
+# Also unverified - the docs say nothing about framing beyond baud, so
+# these are just the overwhelmingly common defaults, kept overridable.
+DEFAULT_BYTESIZE = serial.EIGHTBITS
+DEFAULT_PARITY = serial.PARITY_NONE
+DEFAULT_STOPBITS = serial.STOPBITS_ONE
 
 
 class SerialTransport:
-    def __init__(self, port: str, baudrate: int = DEFAULT_BAUDRATE, timeout: float = DEFAULT_TIMEOUT_S):
+    def __init__(
+        self,
+        port: str,
+        baudrate: int = DEFAULT_BAUDRATE,
+        timeout: float = DEFAULT_TIMEOUT_S,
+        bytesize: int = DEFAULT_BYTESIZE,
+        parity: str = DEFAULT_PARITY,
+        stopbits: float = DEFAULT_STOPBITS,
+    ):
         self._ser = serial.Serial(
             port=port,
             baudrate=baudrate,
-            bytesize=serial.EIGHTBITS,
-            parity=serial.PARITY_NONE,
-            stopbits=serial.STOPBITS_ONE,
+            bytesize=bytesize,
+            parity=parity,
+            stopbits=stopbits,
             timeout=timeout,
         )
 
