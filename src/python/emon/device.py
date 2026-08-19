@@ -140,7 +140,17 @@ class EMonDevice:
         """Uses Mode 3 (full calc) because the fields needed here are split
         across Mode 4 (RMS) and Mode 5 (angles + frequency) - see
         mindflow.md "Mode coverage gap". Mode 3 is slower (up to ~3s per
-        the docs) but guarantees every field we need is populated."""
+        the docs) but guarantees every field we need is populated.
+
+        NOTE (confirmed against real hardware, mindflow.md "Step 4.3"):
+        Ia/Ib/Ic/Ua/Ub/Uc are the device's RAW pre-calibration RMS
+        readings, not the calibrated value shown on its own front panel -
+        e.g. a real 0.1A input read back as 0.0998 A here while the
+        device's display showed 0.998 A, because the display additionally
+        applies the device's own configured current-transformer ratio
+        (see `set_current_limits`'s current_limit_type/index) that this
+        field does not. Multiply by the appropriate ratio yourself if you
+        need calibrated values; this library doesn't know that ratio."""
         payload = self._call(c.Mode.CALC_ALL)
         if len(payload) != c.RESPONSE_PAYLOAD_BYTES:
             raise EMonProtocolError(

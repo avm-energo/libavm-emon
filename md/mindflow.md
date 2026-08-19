@@ -14,8 +14,13 @@ protocol, plus one extra Mode 2 variant for sibling models ЭМ‑3.3Т1/ЭМ‑
 
 **All 4 milestone functions (connect, get_device_info, set_current_limits,
 get_analog_inputs) are implemented and confirmed working live against
-real hardware.** The protocol reverse-engineering phase (steps 0-3) is
-done; remaining work is narrow, targeted follow-ups (see "Next action").
+real hardware, including with a real load.** The protocol
+reverse-engineering phase (steps 0-3) is done. Step 4.3's real-load test
+found and fixed two real field-offset bugs (RMS, frequency) inherited
+from the doc-derived tables in Step 1 — a reminder that "matches the
+docs' worked example" and "matches real hardware" are different bars, and
+only the latter is fully trustworthy. Remaining work is narrow, targeted
+follow-ups (see "Next action").
 
 - Step 0 (doc analysis) — done.
 - Step 1 (planning files + protocol reconstruction) — done, this file.
@@ -49,15 +54,24 @@ done; remaining work is narrow, targeted follow-ups (see "Next action").
 - Step 4.2 (`set_current_limits`, with independent cross-check via Mode
   3's footer fields instead of just trusting Mode 2's own echo) — **done**,
   see "Step 4.2" below. Device left in its original state after testing.
-- **Next action:** two narrow open items remain, neither blocking use of
-  the 4 milestone functions: (1) get a real load onto the meter's
-  current/voltage inputs to sanity-check `get_analog_inputs()`'s field
-  offsets against known values (everything read as exactly 0 so far,
-  consistent with "no load connected" but not a positive confirmation the
-  offsets are right); (2) resolve the SW-version field encoding (real raw
-  words known: `0x0702`, `0x0153` — doesn't decode cleanly under the DAA
-  hypothesis, still open). See "Open questions" below for the full list
-  with detail.
+- Step 4.3 (real load on phase A, `get_analog_inputs()` field-offset
+  validation) — **done; found and fixed two real off-by-one-word bugs in
+  the doc-derived field table** (RMS and frequency), confirmed against
+  the meter's own front-panel display as ground truth — see "Step 4.3"
+  below. Angle's offset is now suspect too but unresolved — needs a load
+  with a known non-trivial phase angle to test, unlike the near-resistive
+  load used here.
+- **Next action:** (1) validate/fix the angle field offset with an
+  inductive or capacitive test load (near-zero expected angle from a
+  resistive load can't distinguish "correct and genuinely ~0" from "wrong
+  offset, coincidentally small") — see "Step 4.3"; (2) resolve the
+  SW-version field encoding (real raw words known: `0x0702`, `0x0153` —
+  doesn't decode cleanly under the DAA hypothesis, still open); (3)
+  individually reverify fields 6-19's offsets (only 5 and 11 were
+  checked; if the doc miscounted a field width before field 5, everything
+  from 6 onward inherits the same +1 shift unless proven otherwise - not
+  yet checked field by field). See "Open questions" below for the full
+  list with detail.
 
 ## Step 0 — Reading the vendor docs
 
@@ -544,6 +558,73 @@ touched. Device left in its original state. This confirms Mode 2
 4 milestone functions (connect, device info, set limits, analog inputs) —
 see "Current status" next-action note for what's still open.
 
+## Step 4.3 — Real load on phase A: field-offset validation, two bugs found and fixed (2026-08-19)
+
+With a known 10V/0.1A AC (50Hz nominal) reference connected to the
+meter's phase A inputs, re-ran `get_analog_inputs()` and got obviously
+wrong values: `Ia≈2444A`, `Ua≈1568V`, `frequency≈65526Hz` (or ≈-5 to -10Hz
+read as signed), `phi≈28466 rad`. Channel isolation was still correct
+(B/C stayed clean zero — only A had any nonzero content), which ruled out
+a gross channel-block-mapping error and pointed at something finer:
+either an intra-block field-offset bug or a units/calibration mismatch.
+
+Got the device's own front-panel ground truth: **Ia=0.998A, Ua=10.0247V,
+Freq=50.0Hz**. Neither matched our decoded values by any clean scale
+factor (Ia off by ~2449x, Ua by ~160x - inconsistent ratios rule out "one
+global wrong divisor"), which pointed at wrong bytes, not a wrong
+formula. Scanned the raw payload word-by-word around the documented
+offsets for values matching known-good numbers:
+
+- **Field 5 (RMS) is at word offset 205, not 204 as `pseudocode.md`/Step 1
+  had it.** `Ua` at 205 (frac_bits=20) decodes to **10.0247** - exact
+  match to the front panel to all 4 decimal digits. `Ia` at the same
+  offset decodes to **0.0998** - matches the ~0.1A actually injected, not
+  the front panel's 0.998A (see below for why that's expected, not a
+  second bug). This is an unambiguous, high-precision confirmation, not a
+  coincidence. Root cause not pinned down further than "some field in the
+  1-4 range is undercounted by one word in the doc-derived table" - fields
+  6-19 have not been individually reverified and may need the same shift.
+- **Field 33 (frequency) is at footer word offset 39, not 40.** Scanned
+  the whole footer region 35-45 for anything frequency-shaped: offset 39
+  (unsigned, frac_bits=16) gives **49.44 Hz** - every neighboring offset
+  instead reads as an obvious flag/status word (values right at or near
+  `0xFFFF`/`0x0000` boundaries, or suspiciously round large integers like
+  29020). ~1% off the nominal 50Hz, plausible for real bench-source
+  tolerance rather than a red flag. Note the **shift direction is
+  opposite** field 5's (-1 word here vs. +1 there) - almost certainly an
+  independent transcription error in the footer's field list, not the
+  same root cause propagating through.
+- **Angle (field 11) remains unresolved.** The test load was
+  near-resistive (a `cos(phi)≈0.9998`-looking value was spotted elsewhere
+  in the payload during the scan), so the true phase angle should be near
+  zero regardless of whether the offset is right - which means this test
+  can't discriminate "offset correct, genuinely ~0" from "offset wrong,
+  garbage that happens to look small". Word offset 216 (documented) reads
+  as a large nonsense value (~28000+ rad); offset 218 (field 12, angle
+  u^u, N/A/reserved in I blocks per the doc) reads exactly 0.0000, which
+  is *consistent* with the original unshifted table rather than
+  supporting a shift - genuinely ambiguous either way with this test
+  setup. Needs a load with a known non-trivial phase angle
+  (inductive/capacitive) to actually resolve.
+- **Important semantic finding, not a bug**: Mode 3's RMS fields return
+  the device's **raw pre-calibration** measurement, not the calibrated
+  value its own front panel displays. The front panel's 0.998A for a real
+  0.1A input applies the device's internally-configured current-ratio
+  setting (see `set_current_limits`'s `current_limit_type`/`current_limit_index`,
+  currently `(0, 3)` on this unit) on top of the raw ADC reading; the
+  protocol field itself does not. `get_analog_inputs()`'s docstring now
+  says this explicitly. This also retroactively explains Step 4.1's "all
+  zeros with no load connected" result as entirely expected (raw
+  measurement really is ~0 with nothing connected) rather than merely
+  "uninformative either way" as originally logged there.
+
+Fixed in `constants.py` (`FIELD5_RMS_WORD_OFFSET` 204→205,
+`FIELD33_FREQUENCY_FOOTER_WORD_OFFSET` 40→39); re-ran
+`get_analog_inputs()` after the fix and got `Ia=0.0998, Ua=10.0243,
+frequency=49.4340` - consistent with the scan, confirming the fix flows
+through the real code path, not just the ad hoc diagnostic scripts used
+to find it.
+
 ## Open questions for hardware validation (step 4)
 
 1. ~~Which CRC16 variant?~~ **Resolved** — CRC-16/XMODEM, big-endian on
@@ -560,11 +641,20 @@ see "Current status" next-action note for what's still open.
 4. SW version/date field — now have real raw words (`0x0702`, `0x0153`)
    but still doesn't decode cleanly under any hypothesis tried so far. See
    "Step 3.4".
-5. Does field 5's RMS decoding need the "clamp/external-amplifier"
+5. ~~Does field 5's RMS decoding need the "clamp/external-amplifier"
    exception (16/16 split, ÷65536) instead of the default (12/20 split,
-   ÷1048576) for this particular unit's configuration? Still open — the
-   4536-byte poll frames were captured but not yet decoded field-by-field
-   against `get_analog_inputs()`.
+   ÷1048576)?~~ **Resolved** — the default 12/20 split (÷1048576) is
+   correct; the real bug was the field's *word offset* (204 vs the
+   correct 205), not the frac_bits split. See "Step 4.3".
+5b. Is field 11 (angle)'s word offset also off, the way field 5's and
+   field 33's were? **Open, genuinely unresolved** — the Step 4.3 test
+   load was near-resistive, so the expected near-zero angle can't
+   distinguish a correct offset from a wrong one that happens to look
+   small. Needs a load with a known non-trivial phase angle. See "Step
+   4.3".
+5c. Are fields 6-19's offsets also shifted by the same +1 word that field
+   5 needed? Not individually reverified — only 5 and 11 were checked
+   against real hardware so far. See "Step 4.3".
 6. What mode number does the vendor program actually send for the request
    side? Not directly observed across two 2026-08-19 captures (150s
    total, including a live reconnect) — see "Step 3.2/3.3" and "Step

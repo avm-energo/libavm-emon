@@ -40,9 +40,10 @@ def main() -> None:
     print(f"Ic = {values.Ic:.4f} A   Uc = {values.Uc:.4f} V   phi(Ic/Uc) = {values.phi_ic_uc:.4f} rad")
     print(f"frequency = {values.frequency:.4f} Hz")
     print()
-    print("Sanity-check these against a known load or a reference meter if you")
-    print("have one - the RMS divisor (1048576 vs 65536) depends on whether this")
-    print("unit uses clamps/an external amplifier, see mindflow.md open question #5.")
+    print("RMS values (Ia/Ib/Ic/Ua/Ub/Uc) are the device's raw pre-calibration")
+    print("reading, not its own front-panel's calibrated value - see get_analog_inputs()'s")
+    print("docstring. phi's field offset is still unconfirmed against real hardware -")
+    print("see mindflow.md \"Step 4.3\", open question 5b.")
 
 
 if __name__ == "__main__":
