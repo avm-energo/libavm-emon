@@ -12,15 +12,76 @@ protocol, plus one extra Mode 2 variant for sibling models ЭМ‑3.3Т1/ЭМ‑
 
 ## Current status
 
-**All 4 milestone functions (connect, get_device_info, set_current_limits,
-get_analog_inputs) are implemented and confirmed working live against
-real hardware, including with a real load.** The protocol
-reverse-engineering phase (steps 0-3) is done. Step 4.3's real-load test
-found and fixed two real field-offset bugs (RMS, frequency) inherited
-from the doc-derived tables in Step 1 — a reminder that "matches the
-docs' worked example" and "matches real hardware" are different bars, and
-only the latter is fully trustworthy. Remaining work is narrow, targeted
-follow-ups (see "Next action").
+**Both implementations are done and validated against real hardware.**
+Python (`py/emon/`) implements all 4 milestone functions
+(connect/get_device_info/set_current_limits/get_analog_inputs); the C++
+port (`libavm-emon`, root `src/`/`include/`) implements the 3 targeted
+functions (GetDeviceInfo/SetLimits/GetAnalogInputs). Both work over
+RS-232 and USB. The protocol itself is fully reverse-engineered and
+confirmed correct field-by-field against real hardware — "matches the
+vendor docs' worked example" and "matches real hardware" turned out to
+be different bars throughout this project, and only the latter proved
+trustworthy (see Steps 4.3-4.5, 6.1 for the specific bugs the docs got
+wrong that hardware testing caught).
+
+### Next action (resume point — read this first)
+
+Session paused here (2026-08-19) with the RS-232 cable unavailable.
+Nothing below blocks using the library for its targeted functions — all
+of it is either an accuracy/completeness gap outside that narrow scope,
+or a verification step that just hasn't happened yet. Roughly in
+priority order:
+
+1. **Re-verify RS-232 with the C++ library specifically.** Step 6.1's
+   RS-232 pass happened *before* the DTR/RTS and configuration-order
+   fixes were fully settled; only USB got a full post-fix re-test. Get a
+   cable, run `tests/manual/main.cpp` or the `examples/` against RS-232
+   once more to close this out. Should just work (the fixes are
+   link-agnostic), but hasn't been directly reconfirmed.
+2. **`.gitlab-ci.yml` is untested.** Structure mirrors `libavm-gen`'s,
+   but whether the referenced Docker images (`debian-qt6`, `fedora-qt6`,
+   `fedora-mingw-qt6`) actually have `Qt6SerialPort` installed is
+   unconfirmed — their own docs only mention "Qt6 base+svg". First thing
+   to check if the pipeline fails.
+3. **Packaging scaffolding is untested.** `package/`'s debian/rpm files
+   exist and mirror `libavm-gen`'s structure, but nobody's actually run
+   `dpkg-buildpackage` or `rpmbuild` against them to confirm they
+   produce a working package.
+4. **`Maintainer`/`License: GPLv3` in the packaging files** were copied
+   from `libavm-gen` as a same-organization assumption, never explicitly
+   confirmed as correct for this specific project - worth a quick check.
+5. **SW-version field encoding still unresolved** - real raw words known
+   (`0x0702`, `0x0153`), but no hypothesis tried (including DAA-BCD)
+   decodes them cleanly. See "Step 3.4"/"Step 4.1".
+6. **Mode 3 payload fields 6-10** (RMS-at-1st-harmonic, RMS line value,
+   mean/DC component, mean-rectified value) - offsets genuinely unknown,
+   no independent ground truth available to pin them down (front panel
+   doesn't expose these quantities). Would need a reference power-quality
+   instrument or the vendor PC software's own detailed readout. See
+   "Step 4.5".
+7. **Field 12 (angle u^u)** - lower priority than 6-10, likely
+   unresolvable with this test rig regardless, since it needs two
+   energized voltage phases and testing so far has only driven one. See
+   "Step 4.5".
+8. **Root cause of the intermittent device/link stall** (RS-232's rare
+   version, Step 4.6; USB's much-more-frequent large-transfer version,
+   Step 6.1) was never found, only mitigated with retries. Would need
+   deeper access to the device firmware or the Windows serial driver
+   stack to chase further - flagged as likely out of reach from this
+   side, not an active todo.
+9. **Environment housekeeping**: two `USBPcapCMD` processes (leftover
+   from the Step 5 USB packet-capture investigation) were still holding
+   a lock on the USB device as of this session's end, and killing them
+   needed elevated rights this session didn't have. A reboot or an
+   elevated `Stop-Process` clears it.
+
+**Hardware state note**: the physical meter is currently configured for
+**1-phase-2-wire** (`wiring_scheme = 0b100`), not the 3-phase-4-wire
+(`0b001`) baseline referenced throughout most of this document (Steps
+4.2 onward) - changed deliberately during Step 6.2's validation and left
+that way at the user's request. Expect `wiring_scheme` and any
+wiring-dependent readings to reflect this, not the older baseline, until
+someone changes it back.
 
 - Step 0 (doc analysis) — done.
 - Step 1 (planning files + protocol reconstruction) — done, this file.
@@ -111,14 +172,6 @@ follow-ups (see "Next action").
   `README.md`, `.gitlab-ci.yml`, and a nice unplanned validation: the
   library correctly detected a deliberate live wiring-scheme change on
   the device through two independent read paths.
-
-**Hardware state note**: the physical meter is currently configured for
-**1-phase-2-wire** (`wiring_scheme = 0b100`), not the 3-phase-4-wire
-(`0b001`) baseline referenced throughout most of this document (Steps
-4.2 onward) - changed deliberately during Step 6.2's validation and left
-that way at the user's request. Anyone resuming hardware work should
-expect `wiring_scheme` and any wiring-dependent readings to reflect this,
-not the older baseline.
 
 Repo layout note: Python sources moved from `src/python/` to `py/` in
 this same push, to free up `src/` for the new C++ port (see `plan.md`
