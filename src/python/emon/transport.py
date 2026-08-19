@@ -2,15 +2,14 @@
 
 NOTE: the vendor docs never state the UART parameters (baud rate, parity,
 stop bits) - only an opaque "current speed index" field inside the
-device's system memory area. `DEFAULT_BAUDRATE` below is an unverified
-guess; determine the real value empirically (md/plan.md step 3.1) and
-override it via `EMonDevice(..., baudrate=...)` once known.
+device's system memory area. `DEFAULT_BAUDRATE` below is CONFIRMED against
+real hardware (md/mindflow.md "Step 3.1" resolution): 115200 8N1.
 """
 from __future__ import annotations
 
 import serial
 
-DEFAULT_BAUDRATE = 9600  # UNVERIFIED GUESS, see module docstring
+DEFAULT_BAUDRATE = 115200
 DEFAULT_TIMEOUT_S = 2.0
 
 

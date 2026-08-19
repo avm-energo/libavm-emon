@@ -1,11 +1,14 @@
 """CRC16 candidates for the EMon protocol.
 
-The vendor docs only say "CRC16 checksum over all preceding bytes" without
-specifying polynomial/init/reflection (see md/mindflow.md). `guess_crc16`
-tries a set of common CRC16 variants against a real request/response pair
-captured from the wire and reports which ones reproduce the trailing 2
-bytes, so the correct one can be pinned down empirically
-(md/plan.md step 3.2, scripts/00_find_crc.py).
+CONFIRMED against a real capture (md/mindflow.md "Step 3.2/3.3 — CRC and
+frame byte order confirmed"): CRC-16/XMODEM (poly=0x1021, init=0x0000, no
+reflection, no xorout), computed over [SYNC][status/mode][len_lo][len_hi]
+[payload...] - matched all 29 frames from 2 different response shapes with
+distinct payload content each, so this is not a coincidental match.
+
+Unlike every other multi-byte field in this protocol (little-endian), the
+2-byte CRC itself is transmitted **big-endian** (high byte first) - see
+`frame.py`'s `_pack_crc`/`_unpack_crc`.
 """
 from __future__ import annotations
 
@@ -67,11 +70,8 @@ _VARIANT_LIST: List[Crc16Variant] = [
 ]
 VARIANTS: Dict[str, Crc16Variant] = {v.name: v for v in _VARIANT_LIST}
 
-# UNVERIFIED GUESS — CRC-16/MODBUS is common for this class of device, but
-# this has not been confirmed against real hardware. Override via
-# EMonDevice(..., crc_variant=...) once scripts/00_find_crc.py identifies
-# the real one.
-DEFAULT_VARIANT = VARIANTS["MODBUS"]
+# CONFIRMED against real hardware capture, see module docstring.
+DEFAULT_VARIANT = VARIANTS["XMODEM"]
 
 
 def compute(data: bytes, variant: Crc16Variant = DEFAULT_VARIANT) -> int:

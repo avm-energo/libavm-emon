@@ -1,13 +1,16 @@
 """Low-level frame encode/decode for the EMon binary protocol.
 
-Frame layout (see md/pseudocode.md "Frame format"), all multi-byte fields
-are little-endian:
+Frame layout, CONFIRMED against a real capture (md/mindflow.md "Step
+3.2/3.3"). All multi-byte fields are little-endian **except the CRC**,
+which is transmitted big-endian (high byte first):
 
-    request:  [SYNC=0x02][mode][len_lo][len_hi][payload...][crc_lo][crc_hi]
-    response: [status][SYNC=0x02][len_lo][len_hi][payload...][crc_lo][crc_hi]
+    request:  [SYNC=0x02][mode]  [len_lo][len_hi][payload...][crc_hi][crc_lo]
+    response: [SYNC=0x02][status][len_lo][len_hi][payload...][crc_hi][crc_lo]
 
-`status` is 0x00 for OK ("NORMA") or 0xFF for error ("NE NORMA"). CRC16
-covers every byte before the CRC field itself.
+Both directions put SYNC first (the vendor docs' worked examples read this
+way too; only the docs' abstract "status/sync" field-order prose had it
+backwards). `status` is 0x00 for OK ("NORMA") or 0xFF for error ("NE
+NORMA"). CRC16 covers every byte before the CRC field itself.
 """
 from __future__ import annotations
 
@@ -32,7 +35,7 @@ class EMonDeviceError(Exception):
 def build_request(mode: int, payload: bytes = b"", crc_variant: crc.Crc16Variant = crc.DEFAULT_VARIANT) -> bytes:
     header = bytes([SYNC, mode]) + len(payload).to_bytes(2, "little")
     body = header + payload
-    check = crc.compute(body, crc_variant).to_bytes(2, "little")
+    check = crc.compute(body, crc_variant).to_bytes(2, "big")
     return body + check
 
 
@@ -46,7 +49,7 @@ def parse_response(raw: bytes, crc_variant: crc.Crc16Variant = crc.DEFAULT_VARIA
     if len(raw) < 6:
         raise EMonProtocolError(f"frame too short: {len(raw)} bytes (min 6)")
 
-    status, sync = raw[0], raw[1]
+    sync, status = raw[0], raw[1]
     if sync != SYNC:
         raise EMonProtocolError(f"bad sync byte: {sync:#04x}, expected {SYNC:#04x}")
 
@@ -59,7 +62,7 @@ def parse_response(raw: bytes, crc_variant: crc.Crc16Variant = crc.DEFAULT_VARIA
         )
 
     payload = raw[4 : 4 + length]
-    received_crc = int.from_bytes(raw[4 + length : 6 + length], "little")
+    received_crc = int.from_bytes(raw[4 + length : 6 + length], "big")
     computed_crc = crc.compute(body, crc_variant)
     if received_crc != computed_crc:
         raise EMonProtocolError(

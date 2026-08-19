@@ -64,6 +64,23 @@ def decode_ascii(raw: bytes) -> str:
     return fixed.decode("latin-1").rstrip("\x00 ")
 
 
+def swap_word_bytes(raw: bytes) -> bytes:
+    """Swap the byte order within each 16-bit word.
+
+    CONFIRMED against a real capture (md/mindflow.md "Step 3.3"): ASCII
+    text fields (e.g. the device-type string) are packed 2 characters per
+    little-endian word, so each pair of characters arrives byte-swapped on
+    the wire relative to reading order - e.g. the device-type string
+    "EM3.1KM..." arrives as bytes `4d 45 2e 33 ...` ("ME.3K1..."), which
+    swap_word_bytes + decode_ascii turns back into "EM3.1KM...". Call this
+    before decode_ascii for any text field; raw is left unchanged if its
+    length is odd (last byte kept as-is)."""
+    out = bytearray(raw)
+    for i in range(0, len(raw) - 1, 2):
+        out[i], out[i + 1] = raw[i + 1], raw[i]
+    return bytes(out)
+
+
 def decode_daa_digit_string(word: int, digits: int) -> str:
     """A DAA-BCD word: each hex digit of the raw value IS a decimal digit.
     E.g. raw=0x2017 -> "2017"."""

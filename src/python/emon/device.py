@@ -96,7 +96,7 @@ class EMonDevice:
         ends with its own CRC at offset 510, matching Mode 15's "block
         closed by CRC" addressing - see mindflow.md step 1."""
         payload = self._read_fram(start_word=0, count_words=256)
-        device_type = codecs.decode_ascii(payload[0:16])
+        device_type = codecs.decode_ascii(codecs.swap_word_bytes(payload[0:16]))
         serial_number = int.from_bytes(payload[16:18], "little")
         device_type_id = int.from_bytes(payload[26:28], "little")
         sw_version_raw_words = (
