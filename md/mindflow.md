@@ -87,6 +87,18 @@ follow-ups (see "Next action").
   unresolvable with this test rig regardless, since it needs two active
   voltage phases and this rig only energizes phase A. See "Open
   questions" below for the full list with detail.
+- Step 5 (verify the protocol over USB, before starting the C++ port) —
+  **done; same protocol, different serial parameters**: USB uses
+  3,000,000 baud / 8N2 (vs. RS-232's 115200 / 8N1), everything else
+  (frame format, CRC, field offsets) is identical — see "Step 5" below
+  for the investigation, including two dead ends (a program that needs
+  exclusive USB access, and a capture that turned out to be tapping an
+  unrelated device) before landing on the real answer.
+
+Repo layout note: Python sources moved from `src/python/` to `py/` to
+free up `src/` for the upcoming C++ port (see `plan.md` section 5); a
+Qt/CMake C++ library (`libavm-emon`) implementing `GetDeviceInfo`,
+`SetLimits`, and `GetAnalogInputs` is next, see `plan.md` section 7.
 
 ## Step 0 — Reading the vendor docs
 
@@ -809,6 +821,115 @@ occasionally takes 15s+ instead of its steady ~2.5s) is **not**
 determined - out of scope to chase further without vendor firmware
 insight; the retry is a practical mitigation, not a fix for whatever
 causes it.
+
+## Step 5 — USB carries the same protocol, at 3,000,000 baud / 8N2 (2026-08-19)
+
+Before starting the C++ port, checked whether the EMon protocol is the
+same over the device's USB port as over RS-232 — the device has both,
+and USB is strongly preferred for the eventual C++ consumer since so few
+PCs still have a real serial port. This took several wrong turns before
+landing on the actual answer.
+
+**USB enumerates as a plain FTDI virtual COM port** (`USB Serial Port`,
+VID:PID `0403:6001`) — no vendor driver needed, shows up like any other
+COM port. First attempt: probe it with the confirmed RS-232 parameters
+(115200 8N1) — total silence, the same "zero bytes at every baud" symptom
+that plagued the original RS-232 bring-up in Step 3.1. Unlike that case,
+this one needed an **exhaustive** sweep before it gave up any information:
+13 bauds (1200 through 921600) x 4 parity/stop-bit combinations x 4
+DTR/RTS states — 200+ combinations, all silent. That's stronger evidence
+than the RS-232 case ever produced (a wrong CRC guess should still elicit
+a 6-byte NOT-NORMA reply at the *right* baud), which pointed at something
+more fundamental than a simple parameter mismatch.
+
+**Dead end: the vendor's dedicated USB program needs genuinely exclusive
+device access.** It refused to connect at all if any other USB device was
+present, and separately refused to connect while *any* other process (even
+a passive one) had an open handle on the port - true even through HHD's
+"split" mode (two independent virtual ports), which had been transparent
+to every RS-232 tool all session. That ruled out the passive
+COM-port-tap approach that worked so well for RS-232 (Steps 3.2-3.6) and
+motivated switching to genuine USB packet capture (USBPcap + Wireshark),
+which taps at the host-controller level below any COM-port software layer
+and can't interfere with anything.
+
+**Dead end: a misidentified device.** The first USBPcap capture found
+what looked like the real protocol - byte-for-byte identical to a known
+RS-232 capture, including the CRC - tunneled inside what appeared to be
+raw commands on a USB Mass Storage interface (SCSI Bulk-Only Transport
+endpoints, alongside Windows' own automatic "Test Unit Ready" disk
+polling). This led down a real rabbit hole (confirmed the exact endpoint
+mapping via the USB configuration descriptor, worked out that reaching it
+from C++ would need raw `DeviceIoControl`/`IOCTL_SCSI_PASS_THROUGH_DIRECT`
+rather than `QSerialPort`) before the user caught the actual problem:
+that USB device (VID:PID `0xc251:0x5750`) was an unrelated DIY project of
+theirs that happened to be connected to the same PC at the same time, not
+the meter. Confirmed by disconnecting it and re-enumerating - it vanished,
+leaving only the real meter's FTDI device. **The byte-identical protocol
+match was a complete coincidence of timing** (or possibly a completely
+separate reason to revisit if it ever matters again) - worth remembering
+as a lesson: a strong content-level match doesn't prove you've identified
+the right *device*, only the right *bytes*, when multiple USB devices are
+active during a capture. Always verify via VID:PID/bus/address which
+physical device a capture frame actually belongs to, especially when
+multiple devices are present.
+
+**Real answer, found the same way, on the correct device this time**:
+re-ran the USBPcap capture with the DIY device physically disconnected
+and the COM-port split removed (to let the vendor program get its needed
+exclusive access). The vendor program talks to the FTDI chip via direct
+USB vendor control transfers (FTDI's low-level protocol: `Reset`,
+`SetBaudRate`, `SetLatTimer`, `SetData`, `GetModemStat`) rather than
+through the standard Windows serial API - explaining why it needs
+exclusive access and why nothing we tried via `pyserial`/`QSerialPort`-style
+APIs worked initially. The critical two parameters, read directly out of
+the `SetBaudRate` and `SetData` control transfers:
+
+- **Baud rate**: raw divisor value `0x0000` in FTDI's encoding, which per
+  FTDI's documented special-case table means **3,000,000 baud** (not
+  2,000,000, which is divisor `1`) - a rate never tried in any sweep
+  before this, since prior sweeps went up to 921,600.
+- **Stop bits**: **2**, not 1 - so 8N2, not 8N1. RS-232 uses 8N1 at
+  115200; USB uses 8N2 at 3,000,000. Different framing *and* different
+  baud, which is why the earlier broad sweep (which did include 8N2, but
+  only up to 921600) never landed on the right combination - the two
+  differences needed to be found together, not independently.
+
+The actual application-layer bytes captured on the wire (`02 0f 04 00 00
+00 00 01 13 cf` for a Mode 15 request, full matching 518-byte device-info
+response) are **byte-for-byte identical** to `build_request()`'s own
+output and to previously-captured RS-232 frames - confirmed by
+replicating the exact parameters directly:
+
+```
+baud=3000000, bytesize=8, parity=NONE, stopbits=2 (8N2)
+```
+
+produces a clean, CRC-valid, full Mode 3 response (4542 bytes) when
+sent the same `build_request(Mode.CALC_ALL)` bytes used throughout this
+whole session. Latency is comparable to the RS-232 baseline (~2s in the
+one measurement taken) and shows the same kind of occasional
+multi-second stall characterized in Step 4.6 (first attempt: 12s and
+short; a plain retry succeeded cleanly).
+
+**Practical implications:**
+- The protocol layer (CRC-16/XMODEM, frame format, all field offsets and
+  codecs) needs **zero changes** for USB - it's the exact same protocol.
+  Only the transport's serial parameters differ.
+- `QSerialPort` handles this natively - custom baud rates and 2-stop-bit
+  framing are both standard features, no raw Windows USB/SCSI API needed.
+  The earlier SCSI-pass-through conclusion doesn't apply; that whole
+  branch of the investigation was chasing the wrong device.
+- The C++ transport layer should support both parameter sets (RS-232:
+  115200 8N1; USB: 3,000,000 8N2) and the Step 4.6 retry mitigation,
+  since the occasional stall shows up on both interfaces.
+- Not yet done: running the *actual* `EMonDevice`/Python library (not
+  just raw probe bytes) against USB, since `transport.py`'s
+  `SerialTransport` currently hardcodes `STOPBITS_ONE`. Would need a
+  `stopbits` constructor parameter before `get_device_info()` /
+  `get_analog_inputs()` could be run against COM11 directly. Low
+  priority given the C++ port is next and will need this parameterization
+  anyway.
 
 ## Open questions for hardware validation (step 4)
 
