@@ -94,17 +94,20 @@ follow-ups (see "Next action").
   for the investigation, including two dead ends (a program that needs
   exclusive USB access, and a capture that turned out to be tapping an
   unrelated device) before landing on the real answer.
-- Step 6 (C++ port: `libavm-emon` Qt/CMake shared library) — **done**,
-  `GetDeviceInfo`/`SetLimits`/`GetAnalogInputs` implemented against
-  `QSerialPort`, supporting both confirmed link types (RS-232 and USB)
-  via a `LinkType` enum rather than exposing raw baud/stop-bits. Verified
-  compiling cleanly (zero warnings) in both shared and static
-  configurations. Packaging/build conventions (deb/rpm `package/`
-  directory, `BUILD_SHARED_LIBS` switch, `emon_export.h`, the rest of the
-  CMake structure) ported from the sibling `libavm-gen` project for
-  consistency with other AVM-Energo C++ libraries. See "Step 6" below.
-  **Not yet validated against real hardware** - compiles cleanly, but no
-  C++ program has actually called it against the device yet.
+- Step 6 (C++ port: `libavm-emon` Qt/CMake shared library) — **done and
+  validated against real hardware**. `GetDeviceInfo`/`SetLimits`/
+  `GetAnalogInputs` implemented against `QSerialPort`, supporting both
+  confirmed link types (RS-232 and USB) via a `LinkType` enum rather than
+  exposing raw baud/stop-bits. Packaging/build conventions (deb/rpm
+  `package/` directory, `BUILD_SHARED_LIBS` switch, `emon_export.h`, the
+  rest of the CMake structure) ported from the sibling `libavm-gen`
+  project for consistency with other AVM-Energo C++ libraries. See "Step
+  6" for the build/packaging work and "Step 6.1" for hardware validation
+  - found and fixed three real bugs (QSerialPort configuration ordering,
+  missing DTR/RTS assertion, and characterizing a genuine USB-link
+  large-transfer stall also present in the reference Python
+  implementation) before all three functions were confirmed working
+  correctly over both RS-232 and USB.
 
 Repo layout note: Python sources moved from `src/python/` to `py/` in
 this same push, to free up `src/` for the new C++ port (see `plan.md`
@@ -1033,11 +1036,123 @@ per instruction), for consistency with their other C++ libraries:
   `Config.cmake`/`ConfigVersion.cmake` generation - all structurally
   identical to `libavm-gen`.
 
-**Not yet done**: running the compiled library against real hardware
-(compiles cleanly, but nothing has actually called `Device::getDeviceInfo()`
-etc. from C++ yet - would need a small test executable, or linking it
-into a consuming project). `.gitignore` extended with C++/Qt/MSVC
-build-artifact patterns merged in from `libavm-gen`'s.
+`.gitignore` extended with C++/Qt/MSVC build-artifact patterns merged in
+from `libavm-gen`'s.
+
+**Validated against real hardware since** - see "Step 6.1" below: found
+and fixed three real bugs the compile-only pass couldn't catch (DTR/RTS,
+QSerialPort configuration ordering, and a large-USB-transfer read
+pattern), then confirmed all three functions work correctly over both
+link types.
+
+## Step 6.1 — C++ library validated against real hardware (2026-08-19)
+
+Added `tests/manual/main.cpp` + `tests/CMakeLists.txt` - a small
+dev-only executable (not installed/packaged, only built when
+`libavm-emon` is the top-level project) mirroring `py/scripts/02/03/04`'s
+CLI conventions, to actually exercise the compiled library against the
+device: `manual_test <port> <rs232|usb> <info|analog|limits ...>`.
+
+First run crashed immediately with `STATUS_DLL_NOT_FOUND` - a red
+herring chased partway down an ICU-dependency investigation before the
+user pointed out the real cause: `libavm-emon.dll` (in `build/Release/`)
+and `manual_test.exe` (in `build/tests/Release/`) are in different
+directories, and only the Qt bin directory had been added to `PATH`, not
+the library's own output directory. Both need to be on `PATH` (or the
+DLL copied next to the exe) for the loader to find it. Lesson: `dumpbin
+/dependents` is useful for diagnosing *which* DLL is missing, but a
+"can't find X.dll" symptom is often simpler than it looks - check
+whether X is just not colocated with the exe or on `PATH` before
+assuming a deeper problem.
+
+With that resolved, `manual_test COM1 rs232 info` opened the port fine
+but got zero bytes back - identical symptom to the original RS-232
+bring-up struggle (Step 3.1), and confirmed via the already-working
+Python library that the device *was* responding normally on that same
+port at that moment, so the cause had to be in the C++ code, not
+hardware. Two real bugs found and fixed, both worth remembering for any
+future QSerialPort-based work:
+
+1. **Configuration order**: parameters (`setBaudRate`, `setStopBits`,
+   etc.) were being set *before* `open()`. Qt's documentation says this
+   should work, but in practice the Windows backend doesn't reliably
+   apply pre-open settings. Fixed by opening first, then configuring
+   (matching Qt's own examples) - `Transport::Transport()` now does this
+   unconditionally.
+2. **DTR/RTS**: `pyserial` (used throughout this project's Python
+   implementation) apparently asserts DTR/RTS by default; `QSerialPort`
+   does not. Without explicitly asserting both, the device produced
+   total silence - no error, just zero bytes back, indistinguishable
+   from a wrong baud/framing guess purely from the symptom. This was the
+   fix that actually got a response - confirmed via embedding diagnostics
+   directly in exception messages (`qDebug()` wasn't reaching stderr in
+   this environment, routed to `OutputDebugString` instead since no
+   console was attached the way Qt expected - a good reminder not to
+   assume `qDebug()` output is visible without checking). Whether the
+   device genuinely needs these lines electrically (matching a
+   historical Step 3.1 theory about opto-isolator power) or an
+   intermediate adapter does, asserting both unconditionally is now what
+   `Transport`'s constructor does.
+
+With those two fixes, `GetDeviceInfo`, `SetLimits`, and
+`GetAnalogInputs` all worked correctly over RS-232, producing output
+byte-identical to the reference Python implementation across repeated
+runs (including the same near-zero readings for `GetAnalogInputs` with
+no load connected, matching Step 4.1's finding exactly).
+
+**USB uncovered a third, more interesting issue.** `GetDeviceInfo` (518
+bytes) and `SetLimits` (16 bytes) worked reliably every time over USB.
+`GetAnalogInputs` (4536-byte payload, 4542-4538 bytes on the wire
+depending on how you count) failed intermittently - not the rare,
+already-characterized Step 4.6 device stall, but a much more frequent
+short-read, missing anywhere from a handful to a few hundred bytes, no
+two failures losing quite the same amount. Chased this through several
+hypotheses before finding the real one:
+
+- Tried polling in short time slices instead of one long
+  `waitForReadyRead()` call - no improvement.
+- Tried an event-loop-driven read (`readyRead` signal + `QEventLoop`,
+  the pattern Qt's own examples use for bulk reads) instead of the
+  blocking wait/read pattern - no improvement either, though kept as
+  good practice regardless.
+- **The decisive test**: reproduced the exact same intermittent
+  short-read using raw `pyserial` at the same USB parameters (3,000,000
+  baud, 8N2), completely independent of Qt/C++ - 3 of 5 attempts timed
+  out short (missing tens to hundreds of bytes), 2 of 5 succeeded
+  cleanly in ~2s. **This proves the issue is a genuine hardware/driver
+  characteristic of this specific USB link at 3,000,000 baud for large
+  transfers, not a bug in this library's transport code** - it affects
+  Python identically. Also established: once a transfer starts stalling,
+  waiting longer within that same attempt doesn't reliably help (pyserial
+  attempts still came up short even at their own 15-17s timeout) -
+  abandoning a stalled attempt and retrying fresh works better than one
+  very long wait.
+
+**Practical mitigation, not a root-cause fix** (the root cause is outside
+this library's control): `Transport::request()`'s default `retries`
+raised from 1 to 4, documented clearly as coping with a real, confirmed
+link characteristic rather than masking a bug. With this, `GetAnalogInputs`
+over USB succeeds reliably in practice (fast, ~2s, when the first good
+attempt lands; a few retries, each cheap once they fail fast rather than
+hanging, when it doesn't) - not a 100% first-try guarantee, but consistent
+with what the reference Python implementation achieves too, since it has
+the identical underlying limitation. A held-open connection's retries did
+*not* show an obvious "once bad, always bad for this session" pattern
+worth chasing further - fresh Python opens showed the same ~40-60% raw
+success rate per attempt as retries within one open C++ connection.
+
+**Root cause of the underlying stall itself remains unknown** - likely
+either the device's own transmission occasionally pausing mid-payload
+(a large-payload-specific variant of Step 4.6's stall) or an OS/driver
+buffering limitation specific to sustaining 3,000,000 baud for a
+multi-KB burst. Out of scope to chase further without deeper access to
+either the device firmware or the Windows serial driver stack - the
+retry mitigation is the practical stopping point here, same as Step 4.6.
+
+RS-232 hardware validation had to stop mid-session (the test cable
+became unavailable), but the three functions were already confirmed
+working correctly over RS-232, repeatedly, before that happened - see
+above.
 
 ## Open questions for hardware validation (step 4)
 

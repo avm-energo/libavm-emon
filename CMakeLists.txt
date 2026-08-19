@@ -134,3 +134,11 @@ install(FILES "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
 set(VERSION_IN ${CMAKE_CURRENT_SOURCE_DIR}/VERSION.in)
 set(VERSION_OUT ${CMAKE_CURRENT_SOURCE_DIR}/package/src/VERSION)
 configure_file(${VERSION_IN} ${VERSION_OUT} @ONLY)
+
+# Manual hardware test executable (md/mindflow.md "Step 6") - dev-only,
+# not installed/packaged. Only built when this is the top-level project,
+# so consumers pulling this in via add_subdirectory()/FetchContent don't
+# get it too.
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+  add_subdirectory(tests)
+endif()

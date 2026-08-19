@@ -24,14 +24,20 @@ public:
     // Send frame and read back exactly one response frame, using its
     // length field to know how many bytes to read.
     //
-    // CONFIRMED against real hardware (md/mindflow.md "Step 4.6"): under
-    // back-to-back polling, response latency is otherwise steady, but
-    // occasionally (roughly 1-in-15 to 25 requests) the device stalls
-    // for several seconds. A plain retry (fresh write, fresh read) has
-    // recovered every time this was observed, so that's what `retries`
-    // does - it copes with a real intermittent device hiccup, it isn't
-    // masking a bug here. Pass retries=0 to disable and fail fast.
-    QByteArray request(const QByteArray &frame, int retries = 1);
+    // CONFIRMED against real hardware (md/mindflow.md "Step 4.6" and
+    // "Step 6"): under back-to-back polling, response latency is
+    // otherwise steady, but occasionally the device stalls mid-response -
+    // roughly 1-in-15 to 25 requests over RS-232, much more often
+    // (close to half, in testing) over USB at 3,000,000 baud. Once a
+    // transfer stalls, waiting it out within the *same* attempt doesn't
+    // reliably help - confirmed identical behaviour in the reference
+    // Python/pyserial implementation, so this is a real device/link
+    // characteristic, not a bug in this transport. Abandoning a stalled
+    // attempt and retrying fresh (new write, new read) works far better
+    // than a long single timeout, hence the higher default retry count
+    // than a first guess would suggest. Pass retries=0 to disable and
+    // fail fast.
+    QByteArray request(const QByteArray &frame, int retries = 4);
 
 private:
     QByteArray readExact(int n);

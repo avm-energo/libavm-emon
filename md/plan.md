@@ -130,11 +130,13 @@ stop-bit count nobody had tried together).
       `D:\qt\6.10.1\msvc2022_64`). Done — zero warnings, both shared and
       static `BUILD_SHARED_LIBS` configurations verified to build
       correctly.
-- [ ] 7.4 Validate the compiled C++ library against the real device —
-      both over RS-232 and over USB, since they need different transport
-      parameters. **Not yet done** — compiles cleanly but hasn't actually
-      been run against hardware; needs a small test executable or a
-      consuming project to link against it.
+- [x] 7.4 Validate the compiled C++ library against the real device —
+      both over RS-232 and over USB. Done via a new `tests/manual/`
+      executable — see `mindflow.md` "Step 6.1". Found and fixed three
+      real bugs (QSerialPort configuration ordering, missing DTR/RTS,
+      and a USB large-transfer stall also confirmed present in the
+      reference Python implementation) before all three functions
+      checked out correctly over both link types.
 
 ## Known unimplemented / out of scope for now
 - Mode 19 (set reduction coefficients) — doc section is missing entirely,
