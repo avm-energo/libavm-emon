@@ -73,6 +73,9 @@ follow-ups (see "Next action").
   unresolved** - no independent ground truth available for them (front
   panel doesn't expose those quantities), but now narrowed to a concrete,
   quantified 2-word shortfall. See "Step 4.5" below.
+- Step 4.6 (investigate the transient short-read timeout) — **done; root
+  cause found (real device-side stall, not a client bug), mitigated with
+  an automatic retry** — see "Step 4.6" below.
 - **Next action:** (1) resolve the SW-version field encoding (real raw
   words known: `0x0702`, `0x0153` — doesn't decode cleanly under the DAA
   hypothesis, still open); (2) fields 6-10's internal boundaries are still
@@ -82,13 +85,8 @@ follow-ups (see "Next action").
   directly, or the vendor PC software's own detailed readout, as ground
   truth; field 12 (angle u^u) is separately unpinned but may be
   unresolvable with this test rig regardless, since it needs two active
-  voltage phases and this rig only energizes phase A; (3) a transient
-  short-read TimeoutError recurred several more times during Step 4.5
-  (`_read_exact` got 1-3 bytes fewer than the declared 4538-byte frame
-  length, now on maybe 1-in-3 requests when polling in quick succession)
-  — still not investigated, but frequent enough now to be worth a look;
-  a plain retry has always succeeded. See "Open questions" below for the
-  full list with detail.
+  voltage phases and this rig only energizes phase A. See "Open
+  questions" below for the full list with detail.
 
 ## Step 0 — Reading the vendor docs
 
@@ -763,6 +761,54 @@ testing - now often enough (roughly 1 in 3 requests when polling in
 quick succession) to suspect it's a real, reproducible quirk rather than
 a fluke, though still not investigated. A plain retry has resolved it
 every time so far.
+
+## Step 4.6 — Investigating the transient short-read timeout (2026-08-19)
+
+The short-read `TimeoutError` first seen in Step 4.4 kept recurring
+through Step 4.5's back-to-back diagnostic queries, often enough to
+suspect a real, reproducible cause rather than a fluke. Two things worth
+knowing before the root-cause finding below:
+
+- Windows pyserial (`serialwin32.py`) issues one `ReadFile` per `read(n)`
+  call with a **flat total timeout regardless of `n`** (`ReadTotalTimeoutConstant`,
+  no multiplier) - so a request for 4538 bytes gets exactly the configured
+  `timeout` seconds to arrive in full, not extra time scaled to the byte
+  count. This isn't itself the bug, but it does mean there's no built-in
+  slack beyond whatever `timeout` you pass.
+- `transport.request()` already calls `reset_input_buffer()` fresh before
+  every write, so stale bytes from a previous exchange can't bleed into
+  the next one - ruled out as a contributing factor.
+
+Measured actual latency directly: 15 back-to-back Mode 3 requests (no
+artificial delay between them, `timeout=15s`) via a throwaway timing
+probe. Result: **14 of 15 took a remarkably steady 2.476-2.478s** (about
+1ms of jitter across the whole batch - this is a real internal
+computation constant, not something that "usually finishes around 3s"
+the way the docs' vague "up to ~3s" phrasing suggested). The 15th request
+took **17.086s and still came up 3 bytes short even with a 15-second
+timeout** - not "response time nudged past a slightly-too-tight budget",
+a genuine multi-second device-side stall far outside its own normal
+behavior. A second batch of 25 requests immediately after (same
+back-to-back pattern) completed all 25 cleanly at the steady ~2.477s
+figure, with no stall - consistent with an intermittent, roughly
+1-in-15-to-25 event, not something that reproduces on demand.
+
+**Conclusion: this is a real, occasional device-side hiccup, not a bug in
+this library's transport code.** Every manual retry throughout this
+entire session (this stall and the two similar ones noted in Steps 4.4
+and 4.5) recovered cleanly on the very next attempt - simple re-issue is
+a reliable, well-evidenced mitigation. Added `retries: int = 1` to
+`SerialTransport.request()` (default: one automatic retry on
+`TimeoutError`, `retries=0` to restore old fail-fast behaviour);
+`EMonDevice._call()` picks this up automatically since it doesn't pass
+`retries` explicitly. Verified: a fresh 25-request back-to-back batch
+through the retry-enabled `request()` produced zero visible failures.
+
+Root cause of the underlying device-side stall itself (why Mode 3
+occasionally takes 15s+ instead of its steady ~2.5s) is **not**
+determined - out of scope to chase further without vendor firmware
+insight; the retry is a practical mitigation, not a fix for whatever
+causes it.
 
 ## Open questions for hardware validation (step 4)
 

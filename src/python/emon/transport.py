@@ -51,15 +51,36 @@ class SerialTransport:
         return fewer than `max_bytes`, including zero."""
         return self._ser.read(max_bytes)
 
-    def request(self, frame: bytes) -> bytes:
+    def request(self, frame: bytes, retries: int = 1) -> bytes:
         """Send `frame` and read back exactly one response frame, using the
-        length field to know how many bytes to read."""
-        self._ser.reset_input_buffer()
-        self._ser.write(frame)
-        header = self._read_exact(4)
-        length = int.from_bytes(header[2:4], "little")
-        rest = self._read_exact(length + 2)  # payload + CRC
-        return header + rest
+        length field to know how many bytes to read.
+
+        CONFIRMED against real hardware (md/mindflow.md "Step 4.6"): under
+        back-to-back polling, response latency is otherwise a remarkably
+        steady ~2.5s, but roughly 1-in-15 requests hit a genuine device-side
+        stall - observed taking 15s+ and still coming up a few bytes short
+        even with a generous timeout, not just "slightly exceeded a tight
+        one". A plain retry (fresh write, fresh read) has recovered every
+        single time this was tested manually, so that's what `retries`
+        does here - it is not a workaround for a bug in this code, it's
+        coping with a real intermittent device hiccup. Pass `retries=0` to
+        disable and get the old fail-fast behaviour."""
+        attempts = retries + 1
+        last_exc: TimeoutError | None = None
+        for attempt in range(attempts):
+            self._ser.reset_input_buffer()
+            self._ser.write(frame)
+            try:
+                header = self._read_exact(4)
+                length = int.from_bytes(header[2:4], "little")
+                rest = self._read_exact(length + 2)  # payload + CRC
+                return header + rest
+            except TimeoutError as exc:
+                last_exc = exc
+                if attempt + 1 < attempts:
+                    continue
+                raise
+        raise last_exc  # unreachable, satisfies type checkers
 
     def _read_exact(self, n: int) -> bytes:
         data = self._ser.read(n)
