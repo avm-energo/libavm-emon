@@ -47,11 +47,21 @@ def decode_signed_fixed(words: bytes, frac_bits: int, total_bits: int) -> float:
 def decode_power48(words: bytes) -> float:
     """4-word (8-byte) power field: word0 is a sign flag (0x0000=positive,
     0xFFFF=negative), words 1-3 are a 48-bit unsigned magnitude with 28
-    integer bits and 20 fraction bits."""
+    integer bits and 20 fraction bits.
+
+    CONFIRMED against real hardware (md/mindflow.md "Step 4.5"): unlike
+    every other multi-word field in this protocol, the magnitude's 3
+    words are transmitted **most-significant-word-first** - i.e. word1
+    (right after the sign word) is the *high* 16 bits, not the low 16
+    bits `words_to_uint` would assume. Validated against a live inductive
+    load: footer word 0 (field 20, active power) decoded this way matched
+    a P=U*I*cos(phi) estimate from the (independently confirmed) RMS/angle
+    fields to within 0.6%; footer word 4 (field 21, apparent power)
+    matched U*I almost exactly."""
     if len(words) != 8:
         raise ValueError(f"power field must be 4 words (8 bytes), got {len(words)}")
     sign_word = int.from_bytes(words[0:2], "little")
-    magnitude = words_to_uint(words[2:8])
+    magnitude = words_to_uint(words[6:8] + words[4:6] + words[2:4])
     sign = -1 if sign_word == 0xFFFF else 1
     return sign * (magnitude / (1 << 20))
 

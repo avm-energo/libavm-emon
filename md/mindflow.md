@@ -64,17 +64,31 @@ follow-ups (see "Next action").
   the field's unit is degrees, not radians — see "Step 4.4" below. All 3
   of the offset bugs findable this way (RMS, frequency, angle) are now
   fixed and hardware-confirmed.
+- Step 4.5 (reverify fields 6-10 and 13-19 against hardware) — **done for
+  13-19: found and fixed a real decode-format bug** in the 48-bit power
+  fields (magnitude words transmitted most-significant-first, not
+  least-significant-first like every other multi-word field) — once
+  fixed, fields 13-19 all check out **at their originally documented
+  offsets**, no position shift needed. Fields 6-10 remain **genuinely
+  unresolved** - no independent ground truth available for them (front
+  panel doesn't expose those quantities), but now narrowed to a concrete,
+  quantified 2-word shortfall. See "Step 4.5" below.
 - **Next action:** (1) resolve the SW-version field encoding (real raw
   words known: `0x0702`, `0x0153` — doesn't decode cleanly under the DAA
-  hypothesis, still open); (2) individually reverify fields 6-10 and
-  13-19's offsets (only 5, 11, and 33 were checked; if the doc miscounted
-  a field width before field 5, everything from 6 onward inherits the
-  same shift unless proven otherwise — not yet checked field by field);
-  (3) a transient short-read TimeoutError was observed twice during Step
-  4.4 (`_read_exact` got 1-3 bytes fewer than the declared 4538-byte
-  frame length) — not investigated, likely worth a retry-once or a
-  slightly longer default timeout in `transport.py` if it recurs. See
-  "Open questions" below for the full list with detail.
+  hypothesis, still open); (2) fields 6-10's internal boundaries are still
+  unknown (2-word shortfall confirmed to exist somewhere in that 5-field
+  region, but not which field(s)) - would need either a reference
+  instrument that reports RMS-at-1st-harmonic/mean-rectified-value
+  directly, or the vendor PC software's own detailed readout, as ground
+  truth; field 12 (angle u^u) is separately unpinned but may be
+  unresolvable with this test rig regardless, since it needs two active
+  voltage phases and this rig only energizes phase A; (3) a transient
+  short-read TimeoutError recurred several more times during Step 4.5
+  (`_read_exact` got 1-3 bytes fewer than the declared 4538-byte frame
+  length, now on maybe 1-in-3 requests when polling in quick succession)
+  — still not investigated, but frequent enough now to be worth a look;
+  a plain retry has always succeeded. See "Open questions" below for the
+  full list with detail.
 
 ## Step 0 — Reading the vendor docs
 
@@ -675,6 +689,81 @@ short-read `TimeoutError` twice (got 4535 or 4537 bytes of a declared
 quirk, not a decode issue; a plain retry succeeded both times. Not
 investigated further; flagged in "Current status" next-action.
 
+## Step 4.5 — Reverifying fields 6-10 and 13-19 against hardware (2026-08-19)
+
+Continuing with the same inductive-load setup from Step 4.4
+(Ia≈0.4996A, Ua≈13.033V, phi≈-45.96deg, all now hardware-confirmed),
+worked through the remaining per-channel-block fields.
+
+**Field 18 (cos(phi))**: found at its **documented, unchanged** offset
+240 - decodes to 0.6992 vs. an independently-computed cos(-45.96deg) =
+0.6951 (0.6% off). This was the first sign that not *everything* needed a
+shift - only specific fields had individual transcription bugs.
+
+**Fields 13-17 (per-block power) and 20-27 (footer summed power) - real
+bug found, but a decode-format bug, not an offset bug.** Computed
+expected P/S/Q from the confirmed RMS+angle values (P=U*I*cos(phi),
+S=U*I, Q=U*I*sin(phi)) and searched the documented offsets - initially
+found nothing remotely close (values in the hundreds of millions or
+unrelated small numbers). Brute-forced word-order permutations of
+`decode_power48`'s 3 magnitude words against the footer region and found
+a clean match: the magnitude must be assembled **most-significant-word-
+first** (`words[3],[2],[1]` concatenated in that order), the opposite of
+`words_to_uint`'s least-significant-first convention used by every other
+multi-word field in this protocol - an easy thing to get wrong when
+implementing from the docs' abstract description, since nothing else in
+the protocol works this way. Fixed in `codecs.decode_power48`. With the
+fix, **every field 13-17 and 20-27 matches cleanly at its documented
+offset, no position shift needed at all**:
+
+| field | word offset | decoded | expected | match |
+|---|---|---|---|---|
+| 13/20 active power | 220 / footer 0 | 4.5524 | 4.5258 | 0.6% |
+| 14/21 apparent power | 224 / footer 4 | 6.5105 | 6.5105 | exact |
+| 15/22 reactive (method A) | 228 / footer 8 | ~0.0003 | - | see below |
+| 16/23 reactive (method B) | 232 / footer 12 | -4.6540 | -4.6802 | 0.6% |
+| 17/24 reactive (method C) | 236 / footer 16 | -4.6542 | -4.6802 | 0.6% |
+| 25-27 sequence powers | footer 20/24/28 | 1.5173 (all 3 identical) | - | plausible for single-phase-only test |
+
+Field 15/22's near-zero reading isn't a red flag - the docs describe
+three *different* reactive-power computation methods, and it's
+believable one gives a materially different result than the simple
+U*I*sin(phi) estimate for a real (harmonically imperfect) waveform, while
+the other two agree closely with each other and with the estimate.
+
+**Fields 6-10 - still unresolved, no independent ground truth
+available.** Neither the front panel nor any reference instrument here
+reports "RMS at 1st harmonic," "RMS line value," "mean/DC component," or
+"mean-rectified value" directly, so there's nothing to pattern-match
+against the way P/S/Q or the front-panel Ia/Ua/phi readings served for
+other fields. Scanning this region turned up several candidate offsets
+whose *values* looked plausible (close to the RMS magnitude, as expected
+for "RMS at 1st harmonic" on a near-sinusoidal signal) but multiple
+adjacent offsets all looked equally plausible, with nothing to
+discriminate between them.
+
+What the confirmed neighbors *do* pin down precisely: field 5 real-ends
+at word 207 (205 + width 2), field 11 real-starts at word 215 - leaving
+exactly **8 words for fields 6,7,8,9,10, a 2-word shortfall against
+their documented 10 words (5 fields x 2 words each)**. At least one field
+in this range is narrower than documented, or one doesn't exist as a
+real distinct field in this firmware - which one, unresolved.
+
+Separately (lower confidence): field 11 real-ends at word 217 (if its
+width is genuinely 2, unconfirmed) and field 13 confirmed real-starts at
+220, leaving 3 words for field 12 (documented width 2) - a 1-word
+*surplus*, the opposite direction from fields 6-10's shortfall. Field 12
+("angle u^u", angle between two voltage phases) is likely unresolvable
+with this test rig regardless of scanning effort, since it needs two
+energized voltage phases and this setup only ever drives phase A.
+
+**Unrelated observation**: the transient short-read `TimeoutError` first
+noted in Step 4.4 recurred several more times during this round of
+testing - now often enough (roughly 1 in 3 requests when polling in
+quick succession) to suspect it's a real, reproducible quirk rather than
+a fluke, though still not investigated. A plain retry has resolved it
+every time so far.
+
 ## Open questions for hardware validation (step 4)
 
 1. ~~Which CRC16 variant?~~ **Resolved** — CRC-16/XMODEM, big-endian on
@@ -700,10 +789,20 @@ investigated further; flagged in "Current status" next-action.
    -1 word (216→215), plus the unit is degrees not radians. Confirmed
    with an inductive load (-45.63deg front panel vs. -45.96deg decoded).
    See "Step 4.4".
-5c. Are fields 6-10/13-19's offsets also shifted, the way 5/11/33 all
-   turned out to need independent shifts? Not individually reverified —
-   only 5, 11, and 33 have been checked against real hardware so far. See
-   "Step 4.3"/"Step 4.4".
+5c. ~~Are fields 13-19's offsets also shifted?~~ **Resolved, no** — all
+   check out at their documented offsets. The real bug there was a
+   decode-format error in `decode_power48` (magnitude word order), fixed.
+   See "Step 4.5".
+5d. Fields 6-10's offsets - **still genuinely unresolved**, no
+   independent ground truth available to test against (front panel
+   doesn't expose these quantities). Confirmed there's a 2-word shortfall
+   somewhere in this 5-field region (field 5 ends at word 207, field 11
+   starts at word 215, only 8 words available for 10 documented words) -
+   which specific field(s) account for it is unknown. See "Step 4.5".
+5e. Field 12's offset - lower-priority unresolved; likely unresolvable
+   with the current test rig regardless (needs two energized voltage
+   phases to measure a U-to-U angle; this rig only drives phase A). See
+   "Step 4.5".
 6. What mode number does the vendor program actually send for the request
    side? Not directly observed across two 2026-08-19 captures (150s
    total, including a live reconnect) — see "Step 3.2/3.3" and "Step
