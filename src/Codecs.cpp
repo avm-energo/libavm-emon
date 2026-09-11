@@ -2,6 +2,8 @@
 
 #include <utility>
 
+#include <QtCore/QString>
+
 namespace avm_emon::detail {
 
 std::uint64_t wordsToUint(const QByteArray &words)
@@ -54,6 +56,40 @@ QString decodeAscii(const QByteArray &raw)
     while (end > 0 && (s[end - 1] == QChar(0) || s[end - 1] == QChar(' ')))
         --end;
     return s.left(end);
+}
+
+QString decodeDaaDigitString(std::uint16_t word, int digits)
+{
+    return QStringLiteral("%1").arg(word, digits, 16, QLatin1Char('0'));
+}
+
+DaaDate decodeDaaDate(std::uint16_t yearWord, std::uint16_t monthDayWord)
+{
+    int year = decodeDaaDigitString(yearWord, 4).toInt();
+    QString monthDay = decodeDaaDigitString(monthDayWord, 4);
+    int month = monthDay.left(2).toInt();
+    int day = monthDay.right(2).toInt();
+    return {year, month, day};
+}
+
+QVector<std::pair<std::uint16_t, double>> decodeLimitsTable(const QByteArray &raw,
+                                                             const QHash<std::uint16_t, int> &divisorByType)
+{
+    QVector<std::pair<std::uint16_t, double>> entries;
+    for (int off = 0; off + 5 < raw.size(); off += 6) {
+        auto entryType = static_cast<std::uint16_t>(static_cast<std::uint8_t>(raw[off])
+                                                      | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(raw[off + 1])) << 8));
+        if (entryType == 0)
+            break;
+        auto intWord = static_cast<std::uint16_t>(static_cast<std::uint8_t>(raw[off + 2])
+                                                    | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(raw[off + 3])) << 8));
+        auto fracWord = static_cast<std::uint16_t>(static_cast<std::uint8_t>(raw[off + 4])
+                                                     | (static_cast<std::uint16_t>(static_cast<std::uint8_t>(raw[off + 5])) << 8));
+        int divisor = divisorByType.value(entryType);
+        double value = static_cast<double>(intWord) / divisor + static_cast<double>(fracWord) / (divisor * 65536.0);
+        entries.append({entryType, value});
+    }
+    return entries;
 }
 
 double decodePower48(const QByteArray &words8)

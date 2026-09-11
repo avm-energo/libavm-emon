@@ -3,6 +3,7 @@
 #include "emon_export.h"
 
 #include <QtCore/QString>
+#include <QtCore/QVector>
 #include <cstdint>
 
 namespace avm_emon {
@@ -21,10 +22,19 @@ struct AVM_EMON_EXPORT DeviceInfo {
     QString deviceType;
     std::uint16_t serialNumber = 0;
     std::uint16_t deviceTypeId = 0;
-    // SW version encoding is unresolved - see md/mindflow.md "SW version
-    // field is unresolved". Exposed as raw words until confirmed.
+    // DAA-digit decode of each raw word, e.g. raw (0x0702, 0x0153) ->
+    // "702.153" - confirmed against the device's own display, which shows
+    // this combined with the serial number as "702.153.519" (see
+    // md/mindflow.md "Step 8"). The display separately shows a second,
+    // shorter version ("2.01" on the unit tested) that is NOT decoded
+    // from anywhere in this 512-byte area - likely a separate
+    // bootloader/hardware version not exposed by this protocol at all.
+    QString swVersion;
     std::uint16_t swVersionRawWord0 = 0;
     std::uint16_t swVersionRawWord1 = 0;
+    // SW version date (year/month/day), same DAA-digit decode,
+    // immediately following the version words - see md/mindflow.md "Step 8".
+    int swVersionYear = 0, swVersionMonth = 0, swVersionDay = 0;
 };
 
 struct AVM_EMON_EXPORT AppliedLimits {
@@ -36,17 +46,75 @@ struct AVM_EMON_EXPORT AppliedLimits {
     std::uint16_t wiringScheme = 0;
 };
 
+// The device's supported current/voltage ranges, decoded from the system
+// area's variable-length limits table - see md/mindflow.md "Step 9". Each
+// list is index-aligned with the device's own indexing for that category
+// (i.e. voltage[2] is what voltageLimitIndex=2 selects).
+//
+// voltage and currentTransformer are CONFIRMED against real hardware
+// (19/19 exact matches against a real unit's own displayed limit lists).
+// currentClamp/currentUptt use the same decode formula as
+// currentTransformer (same physical quantity, same protocol) but that
+// specific assumption is NOT independently confirmed - no clamp/UPTT
+// hardware was available to check against.
+struct AVM_EMON_EXPORT SupportedLimits {
+    QVector<double> voltage;
+    QVector<double> currentTransformer;
+    QVector<double> currentClamp;
+    QVector<double> currentUptt;
+
+    // currentLimitType in Mode 2's own numbering (0=transformer, 1=clamp,
+    // 2=UPTT), matching setLimits()'s parameter.
+    const QVector<double> &currentListFor(std::uint16_t currentLimitType) const
+    {
+        switch (currentLimitType) {
+        case 0: return currentTransformer;
+        case 1: return currentClamp;
+        default: return currentUptt;
+        }
+    }
+};
+
 // NOTE (md/mindflow.md "Step 4.3"): Ia/Ib/Ic/Ua/Ub/Uc are the device's raw
 // pre-calibration RMS readings, not the calibrated value its own front
 // panel displays - the panel additionally applies the configured
 // current-transformer ratio (see AppliedLimits::currentLimitType/Index),
-// which this protocol field does not.
+// which this protocol field does not. Use Calibration.h's calibrate() (or
+// calibratedCurrent()/calibratedVoltage() individually) to get values
+// matching the front panel - see md/mindflow.md "Step 9"/"Step 10".
 struct AVM_EMON_EXPORT AnalogInputs {
     double Ia = 0, Ib = 0, Ic = 0;
     double Ua = 0, Ub = 0, Uc = 0;
+    // Accurate to roughly +/-1-2%, NOT the precision implied by the
+    // device's own front-panel display. This is a one-shot measurement
+    // (recomputed fresh on every call, per the vendor docs' own
+    // "single/one-time calculation" framing of every Mode 3/4/5 field),
+    // with real call-to-call jitter and a small systematic low bias -
+    // confirmed against a live 50/60Hz reference and cross-checked
+    // against the front panel at a deliberately non-nominal 52.347Hz, see
+    // md/mindflow.md "Step 7". The front panel is presumably a much
+    // longer-averaged or PLL-tracked measurement of the same signal, not
+    // reflected in this field at all.
     double frequency = 0;
     // DEGREES, not radians - confirmed against real hardware, see
     // md/mindflow.md "Step 4.4".
+    double phiIaUa = 0, phiIbUb = 0, phiIcUc = 0;
+    // The limit configuration active when this reading was taken (fields
+    // 45/46, footer word offsets 64/65 - CONFIRMED unshifted from the doc
+    // against Mode 2's own echo, see md/mindflow.md "Step 4.2"). Needed
+    // to turn Ia/Ib/Ic/Ua/Ub/Uc into calibrated values via calibrate() -
+    // see md/mindflow.md "Step 9".
+    std::uint16_t appliedCurrentLimitType = 0; // Mode 2 numbering: 0=transformer,1=clamp,2=UPTT
+    std::uint16_t appliedCurrentLimitIndex = 0;
+    std::uint16_t appliedVoltageLimitIndex = 0;
+};
+
+// AnalogInputs, scaled to match the device's own front-panel display -
+// see calibrate().
+struct AVM_EMON_EXPORT CalibratedAnalogInputs {
+    double Ia = 0, Ib = 0, Ic = 0;
+    double Ua = 0, Ub = 0, Uc = 0;
+    double frequency = 0;
     double phiIaUa = 0, phiIbUb = 0, phiIcUc = 0;
 };
 

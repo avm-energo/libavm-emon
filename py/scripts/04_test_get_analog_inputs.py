@@ -12,7 +12,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from emon import EMonDevice, EMonDeviceError, EMonProtocolError, crc
+from emon import EMonDevice, EMonDeviceError, EMonProtocolError, calibrate, crc
 from emon.transport import DEFAULT_BAUDRATE
 
 
@@ -29,20 +29,31 @@ def main() -> None:
     try:
         try:
             values = device.get_analog_inputs()
+            limits = device.get_supported_limits()
         except (EMonProtocolError, EMonDeviceError) as exc:
             print(f"FAILED: {exc}")
             raise SystemExit(1)
     finally:
         device.disconnect()
 
-    print(f"Ia = {values.Ia:.4f} A   Ua = {values.Ua:.4f} V   phi(Ia/Ua) = {values.phi_ia_ua:.4f} deg")
-    print(f"Ib = {values.Ib:.4f} A   Ub = {values.Ub:.4f} V   phi(Ib/Ub) = {values.phi_ib_ub:.4f} deg")
-    print(f"Ic = {values.Ic:.4f} A   Uc = {values.Uc:.4f} V   phi(Ic/Uc) = {values.phi_ic_uc:.4f} deg")
-    print(f"frequency = {values.frequency:.4f} Hz")
+    cal = calibrate(values, limits)
+
+    print("raw (pre-calibration):")
+    print(f"  Ia = {values.Ia:.4f} A   Ua = {values.Ua:.4f} V   phi(Ia/Ua) = {values.phi_ia_ua:.4f} deg")
+    print(f"  Ib = {values.Ib:.4f} A   Ub = {values.Ub:.4f} V   phi(Ib/Ub) = {values.phi_ib_ub:.4f} deg")
+    print(f"  Ic = {values.Ic:.4f} A   Uc = {values.Uc:.4f} V   phi(Ic/Uc) = {values.phi_ic_uc:.4f} deg")
+    print(f"  frequency = {values.frequency:.4f} Hz")
     print()
-    print("RMS values (Ia/Ib/Ic/Ua/Ub/Uc) are the device's raw pre-calibration")
-    print("reading, not its own front-panel's calibrated value - see get_analog_inputs()'s")
-    print("docstring.")
+    print(f"calibrated (matches the front panel - see mindflow.md \"Step 9\"):")
+    print(f"  Ia = {cal.Ia:.4f} A   Ua = {cal.Ua:.4f} V")
+    print(f"  Ib = {cal.Ib:.4f} A   Ub = {cal.Ub:.4f} V")
+    print(f"  Ic = {cal.Ic:.4f} A   Uc = {cal.Uc:.4f} V")
+    print()
+    print(
+        f"  (active current range: type={values.applied_current_limit_type} "
+        f"index={values.applied_current_limit_index}, "
+        f"voltage range index={values.applied_voltage_limit_index})"
+    )
 
 
 if __name__ == "__main__":

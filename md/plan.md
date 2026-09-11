@@ -43,9 +43,12 @@ wire (checkboxes below were left stale during the work; trued up now).
       worked examples) implied (`mindflow.md` "Step 3.2/3.3").
 - [x] 3.4 Validate `get_device_info`. Device-type string needs a
       word-byte-swap (`codecs.swap_word_bytes`) the docs don't mention;
-      serial number/device-type ID confirmed. SW version field is still
-      unresolved — raw words captured (`0x0702`, `0x0153`) but no encoding
-      tried decodes them cleanly (`mindflow.md` "Step 3.4", "Step 4.1").
+      serial number/device-type ID confirmed. SW version field
+      (`0x0702`, `0x0153`) resolved 2026-08-26: plain per-word DAA-digit
+      decode ("702.153"), confirmed exactly against the device's own
+      display ("702.153.519" including the serial number); bonus
+      SW-version-date decode confirmed too ("2014-06-24") — see
+      `mindflow.md` "Step 8".
 - [x] 3.5 Validate `set_current_limits`. Confirmed via two independent
       paths agreeing (the command's own echo, and Mode 3's footer fields
       45/46 read back separately) (`mindflow.md` "Step 4.2").
@@ -137,6 +140,45 @@ stop-bit count nobody had tried together).
       and a USB large-transfer stall also confirmed present in the
       reference Python implementation) before all three functions
       checked out correctly over both link types.
+
+## 8. Post-release investigations
+- [x] 8.1 Investigate reported frequency discrepancy (USB ~49.3Hz vs.
+      front-panel ~50.0Hz for the same live signal) — root-caused as a
+      real precision limitation of Mode 3's one-shot frequency field, not
+      a decode/offset bug (independently re-confirmed via a live
+      50→60→50Hz sweep). See `mindflow.md` "Step 7".
+- [x] 8.2 Documented the accuracy caveat on `AnalogInputs::frequency` /
+      `AnalogInputs.frequency` in both `Types.h` and `py/emon/device.py`.
+      Also took a proper 40-sample statistical read at a steady 50.000Hz
+      reference: mean 49.5683Hz, median 49.5015Hz, stdev 0.4392Hz — see
+      `mindflow.md` "Step 7" for the full numbers and the back-to-back-
+      polling stall risk found along the way (mitigated with a small
+      inter-read delay, not yet written up as guidance anywhere else).
+- [x] 8.3 Cross-checked Mode 5 against Mode 3 for frequency (20 reads
+      each, same session): Mode 5 is ~2.75x faster but statistically the
+      same noise character — no hidden precise frequency path. See
+      `mindflow.md` "Step 7".
+- [x] 8.4 Resolved the SW-version field encoding (`0x0702`, `0x0153` ->
+      "702.153", confirmed against the device's own display) plus a bonus
+      SW-version-date decode ("2014-06-24"). Added `DeviceInfo.sw_version`
+      /`.sw_version_date` (both languages), replacing the old "raw,
+      unresolved" exposure. Noted but did not resolve: the display's
+      second, shorter version number ("2.01") doesn't correspond to
+      anything in the 512-byte system area — likely a bootloader/hardware
+      version this protocol doesn't expose. Also flagged (not resolved):
+      `device_type_id=3` per this unit contradicts the docs' own lookup
+      table (`3 = ЭМ3.3Т`), despite the unit identifying as `EM3.1KM`. See
+      `mindflow.md` "Step 8".
+- [x] 8.5 Decoded the current/voltage limits table (offset 44, variable-
+      length, terminated by `type=0`) and fully explained the "raw vs.
+      front-panel-calibrated" ratio from Step 4.3: `calibrated_I = raw_I
+      * (CT_rating_from_table / 1A)`, `calibrated_U = raw_U` (unscaled).
+      Confirmed against real ground truth (user-provided limit lists, 19/19
+      exact matches) and directly tested (raw current stays constant
+      across different configured CT ranges, proving the ratio is a pure
+      config value, not a measurement-range switch). Analysis only, not
+      yet implemented as library code — see `mindflow.md` "Step 9" for
+      what implementing it would need.
 
 ## Known unimplemented / out of scope for now
 - Mode 19 (set reduction coefficients) — doc section is missing entirely,

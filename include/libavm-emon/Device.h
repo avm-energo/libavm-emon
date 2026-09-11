@@ -13,9 +13,10 @@ class Transport;
 
 namespace avm_emon {
 
-// EMon protocol device handle. Implements exactly the three functions
-// this library targets: getDeviceInfo(), setLimits(), getAnalogInputs() -
-// see md/plan.md for why the surface is intentionally this narrow.
+// EMon protocol device handle. Implements the functions this library
+// targets: getDeviceInfo(), setLimits(), getSupportedLimits(),
+// getAnalogInputs() - see md/plan.md for why the surface is
+// intentionally this narrow.
 //
 // Not copyable (owns a serial port handle). Not thread-safe - use one
 // Device per thread, or serialize access yourself.
@@ -43,6 +44,12 @@ public:
     AppliedLimits setLimits(std::uint16_t currentLimitType,
                              std::uint16_t currentLimitIndex,
                              std::uint16_t voltageLimitIndex);
+
+    // Mode 15 (Read FRAM). Decodes the variable-length supported-limits
+    // table (system area offset 44 onward) - see md/mindflow.md "Step 9".
+    // Needed alongside AnalogInputs::appliedCurrentLimit*/
+    // appliedVoltageLimitIndex to compute calibrate()d values.
+    SupportedLimits getSupportedLimits();
 
     // Mode 3 (full calc, RMS + angle + frequency).
     AnalogInputs getAnalogInputs();

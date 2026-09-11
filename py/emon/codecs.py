@@ -106,3 +106,24 @@ def decode_daa_date(word_year: bytes, word_month_day: bytes) -> Tuple[int, int, 
     month = int(decode_daa_digit_string((month_day_word >> 8) & 0xFF, 2))
     day = int(decode_daa_digit_string(month_day_word & 0xFF, 2))
     return year, month, day
+
+
+def decode_limits_table(raw: bytes, divisor_by_type: dict) -> list:
+    """Variable-length supported-limits table (offset 44 of the system
+    area, spilling into the doc's mislabeled adjacent "RESERVE" region) -
+    see md/mindflow.md "Step 9". Each entry is 3 words: type, int_word,
+    frac_word; a type=0 entry terminates the list. `divisor_by_type` maps
+    a type value to its divisor (voltage=64, current categories=512).
+    Returns a list of (type, value) tuples, value = int_word/D +
+    frac_word/(D*65536)."""
+    entries = []
+    for off in range(0, len(raw) - 5, 6):
+        entry_type = int.from_bytes(raw[off : off + 2], "little")
+        if entry_type == 0:
+            break
+        int_word = int.from_bytes(raw[off + 2 : off + 4], "little")
+        frac_word = int.from_bytes(raw[off + 4 : off + 6], "little")
+        divisor = divisor_by_type[entry_type]
+        value = int_word / divisor + frac_word / (divisor * 65536)
+        entries.append((entry_type, value))
+    return entries

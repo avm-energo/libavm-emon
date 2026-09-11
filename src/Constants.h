@@ -43,7 +43,36 @@ constexpr int kField11AngleWordOffset = 215;
 // md/mindflow.md "Step 4.3".
 constexpr int kField33FrequencyFooterWordOffset = 39;
 
+// Word offsets of fields 45/46 (applied current-limit code, applied
+// voltage-limit index) inside the footer. UNSHIFTED from the doc-derived
+// table - CONFIRMED against real hardware in md/mindflow.md "Step 4.2"
+// (agreed with Mode 2's own echo), so field 33's -1 shift was a local
+// transcription error, not something that propagates to every field
+// after it. Field 45 packs two values into one word: high byte =
+// current-limit type (0=transformer, 1=clamp, 2=UPTT - Mode 2's own
+// numbering), low byte = current-limit index. Field 46 is a plain
+// voltage-limit index.
+constexpr int kField45CurrentLimitFooterWordOffset = 64;
+constexpr int kField46VoltageLimitFooterWordOffset = 65;
+
 constexpr int kFooterByteOffset = kWordsPerChannelBlock * kChannelBlockCount * 2;
+
+// Byte offset of the supported current/voltage limits table within the
+// 512-byte system area (Mode 15 FRAM read) - see md/mindflow.md "Step 9".
+// Variable-length, terminated by a type=0 entry; each entry is 3 words
+// (type, int_word, frac_word).
+constexpr int kLimitsTableByteOffset = 44;
+
+// The limits table's OWN type numbering - NOT the same as Mode 2's
+// current-limit type (0=transformer/1=clamp/2=UPTT). Table type = Mode 2
+// type + 2 for the current categories; voltage has no Mode 2 equivalent.
+enum class LimitTableType : std::uint16_t {
+    NoMoreLimits = 0,
+    Voltage = 1,
+    CurrentTransformer = 2,
+    CurrentClamp = 3,
+    CurrentUptt = 4,
+};
 
 // Channel index order matches the wire order: Ia, Ua, Ib, Ub, Ic, Uc.
 enum ChannelIndex { ChIa = 0, ChUa = 1, ChIb = 2, ChUb = 3, ChIc = 4, ChUc = 5 };

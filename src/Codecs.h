@@ -4,8 +4,11 @@
 // payloads. See md/pseudocode.md "Numeric formats" for the derivation.
 
 #include <QtCore/QByteArray>
+#include <QtCore/QHash>
 #include <QtCore/QString>
+#include <QtCore/QVector>
 #include <cstdint>
+#include <utility>
 
 namespace avm_emon::detail {
 
@@ -45,5 +48,27 @@ QString decodeAscii(const QByteArray &raw);
 // are transmitted most-significant-word-first, not least-significant-
 // first.
 double decodePower48(const QByteArray &words8);
+
+// DAA-BCD: each hex digit of the raw word IS a decimal digit, e.g.
+// raw=0x0702 -> "0702". Used for the SW version and SW version date
+// fields - CONFIRMED against the device's own display, see
+// md/mindflow.md "Step 8".
+QString decodeDaaDigitString(std::uint16_t word, int digits);
+
+// 2-word DAA-BCD date (year word, month/day word), e.g.
+// (0x2014, 0x0624) -> {2014, 6, 24}.
+struct DaaDate {
+    int year, month, day;
+};
+DaaDate decodeDaaDate(std::uint16_t yearWord, std::uint16_t monthDayWord);
+
+// Variable-length supported-limits table (system area offset 44,
+// spilling into the doc's mislabeled adjacent "RESERVE" region) - see
+// md/mindflow.md "Step 9". Each entry is 3 words: type, int_word,
+// frac_word; a type=0 entry terminates the list. `divisorByType` maps a
+// raw type value to its divisor (voltage=64, current categories=512).
+// Returns (type, value) pairs, value = int_word/D + frac_word/(D*65536).
+QVector<std::pair<std::uint16_t, double>> decodeLimitsTable(const QByteArray &raw,
+                                                             const QHash<std::uint16_t, int> &divisorByType);
 
 } // namespace avm_emon::detail

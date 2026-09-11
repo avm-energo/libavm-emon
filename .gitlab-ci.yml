@@ -8,10 +8,12 @@ stages:
 #
 # NOTE: unlike libavm-gen, this project has no external AVM-Energo
 # dependencies pulled in via FetchContent - just Qt (Core + SerialPort).
-# UNTESTED whether qt6-serialport (or the mingw64 equivalent) is actually
-# present in these images - their own comment only lists "Qt6 base+svg",
-# not SerialPort specifically. If find_package(Qt6 ... SerialPort) fails
-# here, that's the first thing to check.
+# The debian-qt6/fedora-qt6/fedora-mingw-qt6 images in the dockers repo
+# didn't install qt6-serialport (only "Qt6 base+svg" per their comment),
+# which broke find_package(Qt6 ... SerialPort) here. Fixed in the dockers
+# repo (qt6-serialport-dev / qt6-qtserialport-devel / mingw64-qt6-qtserialport
+# added) - those images need to be rebuilt and repushed for this to take
+# effect.
 
 build:linux-debian:
   stage: build

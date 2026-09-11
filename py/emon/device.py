@@ -8,7 +8,7 @@ md/plan.md step 3 and md/mindflow.md for the open questions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 from . import codecs
 from . import constants as c
@@ -21,11 +21,19 @@ from .transport import DEFAULT_BAUDRATE, DEFAULT_TIMEOUT_S, SerialTransport
 class DeviceInfo:
     device_type: str
     serial_number: int
-    # SW version encoding is unresolved - the two source docs disagree on
-    # field width and the one worked example doesn't decode cleanly under
-    # any of DAA/hex/decimal. Exposed as raw words until confirmed on real
-    # hardware (see mindflow.md "SW version field is unresolved").
+    # DAA-digit decode of each raw word (same trick as decode_daa_date),
+    # e.g. raw (0x0702, 0x0153) -> "702.153" - confirmed against the
+    # device's own display, which shows this combined with the serial
+    # number as "702.153.519" (see mindflow.md "Step 8"). The display
+    # separately shows a second, shorter version ("2.01" on the unit
+    # tested) that this field does NOT decode from anywhere in this
+    # 512-byte area - likely a separate bootloader/hardware version not
+    # exposed by this protocol at all.
+    sw_version: str
     sw_version_raw_words: Tuple[int, int]
+    # SW version date (Y-M-D), same DAA-digit decode, immediately
+    # following the version words - see mindflow.md "Step 8".
+    sw_version_date: Tuple[int, int, int]
     device_type_id: int
 
 
@@ -39,6 +47,35 @@ class AppliedLimits:
 
 
 @dataclass
+class SupportedLimits:
+    """The device's supported current/voltage ranges, decoded from the
+    system area's variable-length limits table - see mindflow.md "Step 9".
+    Each list is index-aligned with the device's own indexing for that
+    category (i.e. `voltage[2]` is what `voltage_limit_index=2` selects).
+
+    `voltage` and `current_transformer` are CONFIRMED against real
+    hardware (19/19 exact matches against a real unit's own displayed
+    limit lists). `current_clamp`/`current_uptt` use the same decode
+    formula as `current_transformer` (same physical quantity, same
+    protocol) but that specific assumption is NOT independently
+    confirmed - no clamp/UPTT hardware was available to check against."""
+
+    voltage: List[float]
+    current_transformer: List[float]
+    current_clamp: List[float]
+    current_uptt: List[float]
+
+    def current_list_for(self, current_limit_type: int) -> List[float]:
+        """`current_limit_type` in Mode 2's own numbering (0=transformer,
+        1=clamp, 2=UPTT), matching `set_current_limits`'s parameter."""
+        return {
+            0: self.current_transformer,
+            1: self.current_clamp,
+            2: self.current_uptt,
+        }[current_limit_type]
+
+
+@dataclass
 class AnalogInputs:
     Ia: float
     Ib: float
@@ -46,6 +83,16 @@ class AnalogInputs:
     Ua: float
     Ub: float
     Uc: float
+    # Accurate to roughly +/-1-2%, NOT the precision implied by the
+    # device's own front-panel display. This is a one-shot measurement
+    # (recomputed fresh on every call, per the vendor docs' own
+    # "single/one-time calculation" framing of every Mode 3/4/5 field),
+    # with real call-to-call jitter and a small systematic low bias -
+    # confirmed against a live 50/60Hz reference and cross-checked
+    # against the front panel at a deliberately non-nominal 52.347Hz, see
+    # mindflow.md "Step 7". The front panel is presumably a much
+    # longer-averaged or PLL-tracked measurement of the same signal, not
+    # reflected in this field at all.
     frequency: float
     # DEGREES, not radians - confirmed against a real inductive-load test,
     # see mindflow.md "Step 4.4". `decode_signed_fixed`'s frac_bits=16
@@ -55,6 +102,71 @@ class AnalogInputs:
     phi_ia_ua: float
     phi_ib_ub: float
     phi_ic_uc: float
+    # The limit configuration active when this reading was taken (fields
+    # 45/46, footer word offsets 64/65 - CONFIRMED unshifted from the doc
+    # against Mode 2's own echo, see mindflow.md "Step 4.2"). Needed to
+    # turn Ia/Ib/Ic/Ua/Ub/Uc into calibrated values via `calibrate()` -
+    # see mindflow.md "Step 9".
+    applied_current_limit_type: int  # Mode 2 numbering: 0=transformer,1=clamp,2=UPTT
+    applied_current_limit_index: int
+    applied_voltage_limit_index: int
+
+
+@dataclass
+class CalibratedAnalogInputs:
+    """`AnalogInputs`, scaled to match the device's own front-panel
+    display - see `calibrate()`."""
+
+    Ia: float
+    Ib: float
+    Ic: float
+    Ua: float
+    Ub: float
+    Uc: float
+    frequency: float
+    phi_ia_ua: float
+    phi_ib_ub: float
+    phi_ic_uc: float
+
+
+def calibrated_current(raw_amps: float, limits: SupportedLimits, current_limit_type: int, current_limit_index: int) -> float:
+    """CONFIRMED against real hardware (mindflow.md "Step 9"): the raw
+    reading is always the true secondary-side current, unaffected by
+    which range is configured (verified directly - cycling the configured
+    range while holding a real current steady left the raw reading
+    unchanged). The front panel's calibrated value is simply
+    `raw * (configured_range_rating_A / 1A)`, "1A" being the assumed
+    standard CT secondary convention. `current_limit_type` is Mode 2's own
+    numbering (0=transformer/1=clamp/2=UPTT), matching `set_current_limits`."""
+    rating = limits.current_list_for(current_limit_type)[current_limit_index]
+    return raw_amps * rating
+
+
+def calibrated_voltage(raw_volts: float) -> float:
+    """CONFIRMED against real hardware (mindflow.md "Step 4.3"/"Step 9"):
+    voltage needs no scaling at all - the raw reading already matches the
+    front panel exactly, regardless of the configured voltage range
+    (which appears to just select ADC gain/precision, not a ratio)."""
+    return raw_volts
+
+
+def calibrate(raw: AnalogInputs, limits: SupportedLimits) -> CalibratedAnalogInputs:
+    """Convenience: apply `calibrated_current`/`calibrated_voltage` to
+    every channel of an `AnalogInputs` reading at once, using the limit
+    configuration it was taken under."""
+    rating = limits.current_list_for(raw.applied_current_limit_type)[raw.applied_current_limit_index]
+    return CalibratedAnalogInputs(
+        Ia=raw.Ia * rating,
+        Ib=raw.Ib * rating,
+        Ic=raw.Ic * rating,
+        Ua=calibrated_voltage(raw.Ua),
+        Ub=calibrated_voltage(raw.Ub),
+        Uc=calibrated_voltage(raw.Uc),
+        frequency=raw.frequency,
+        phi_ia_ua=raw.phi_ia_ua,
+        phi_ib_ub=raw.phi_ib_ub,
+        phi_ic_uc=raw.phi_ic_uc,
+    )
 
 
 class EMonDevice:
@@ -108,7 +220,31 @@ class EMonDevice:
             int.from_bytes(payload[18:20], "little"),
             int.from_bytes(payload[20:22], "little"),
         )
-        return DeviceInfo(device_type, serial_number, sw_version_raw_words, device_type_id)
+        sw_version = "{}.{}".format(
+            int(codecs.decode_daa_digit_string(sw_version_raw_words[0], 4)),
+            int(codecs.decode_daa_digit_string(sw_version_raw_words[1], 4)),
+        )
+        sw_version_date = codecs.decode_daa_date(payload[22:24], payload[24:26])
+        return DeviceInfo(
+            device_type, serial_number, sw_version, sw_version_raw_words, sw_version_date, device_type_id
+        )
+
+    def get_supported_limits(self) -> SupportedLimits:
+        """Read and decode the variable-length supported-limits table
+        (system area offset 44 onward, terminated by a type=0 entry) -
+        see mindflow.md "Step 9"."""
+        payload = self._read_fram(start_word=0, count_words=256)
+        table = payload[c.LIMITS_TABLE_BYTE_OFFSET :]
+        entries = codecs.decode_limits_table(table, c.LIMIT_TABLE_DIVISOR)
+        by_type: dict = {}
+        for entry_type, value in entries:
+            by_type.setdefault(entry_type, []).append(value)
+        return SupportedLimits(
+            voltage=by_type.get(c.LimitTableType.VOLTAGE, []),
+            current_transformer=by_type.get(c.LimitTableType.CURRENT_TRANSFORMER, []),
+            current_clamp=by_type.get(c.LimitTableType.CURRENT_CLAMP, []),
+            current_uptt=by_type.get(c.LimitTableType.CURRENT_UPTT, []),
+        )
 
     def _read_fram(self, start_word: int, count_words: int) -> bytes:
         payload = start_word.to_bytes(2, "little") + count_words.to_bytes(2, "little")
@@ -154,8 +290,9 @@ class EMonDevice:
         device's display showed 0.998 A, because the display additionally
         applies the device's own configured current-transformer ratio
         (see `set_current_limits`'s current_limit_type/index) that this
-        field does not. Multiply by the appropriate ratio yourself if you
-        need calibrated values; this library doesn't know that ratio."""
+        field does not. Use `calibrate()` (or `calibrated_current()`/
+        `calibrated_voltage()` individually) to get values matching the
+        front panel - see mindflow.md "Step 9"/"Step 10"."""
         payload = self._call(c.Mode.CALC_ALL)
         if len(payload) != c.RESPONSE_PAYLOAD_BYTES:
             raise EMonProtocolError(
@@ -177,6 +314,14 @@ class EMonDevice:
         freq_off = c.FOOTER_BYTE_OFFSET + c.FIELD33_FREQUENCY_FOOTER_WORD_OFFSET * 2
         frequency = codecs.decode_ufixed(payload[freq_off : freq_off + 4], frac_bits=16)
 
+        limit45_off = c.FOOTER_BYTE_OFFSET + c.FIELD45_CURRENT_LIMIT_FOOTER_WORD_OFFSET * 2
+        limit45 = int.from_bytes(payload[limit45_off : limit45_off + 2], "little")
+        applied_current_limit_type = (limit45 >> 8) & 0xFF
+        applied_current_limit_index = limit45 & 0xFF
+
+        limit46_off = c.FOOTER_BYTE_OFFSET + c.FIELD46_VOLTAGE_LIMIT_FOOTER_WORD_OFFSET * 2
+        applied_voltage_limit_index = int.from_bytes(payload[limit46_off : limit46_off + 2], "little")
+
         return AnalogInputs(
             Ia=rms("Ia"),
             Ib=rms("Ib"),
@@ -188,4 +333,7 @@ class EMonDevice:
             phi_ia_ua=angle("Ia"),
             phi_ib_ub=angle("Ib"),
             phi_ic_uc=angle("Ic"),
+            applied_current_limit_type=applied_current_limit_type,
+            applied_current_limit_index=applied_current_limit_index,
+            applied_voltage_limit_index=applied_voltage_limit_index,
         )

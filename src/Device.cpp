@@ -88,6 +88,13 @@ DeviceInfo Device::getDeviceInfo()
     info.serialNumber = readU16(raw, 16);
     info.swVersionRawWord0 = readU16(raw, 18);
     info.swVersionRawWord1 = readU16(raw, 20);
+    info.swVersion = QStringLiteral("%1.%2")
+                          .arg(detail::decodeDaaDigitString(info.swVersionRawWord0, 4).toInt())
+                          .arg(detail::decodeDaaDigitString(info.swVersionRawWord1, 4).toInt());
+    detail::DaaDate date = detail::decodeDaaDate(readU16(raw, 22), readU16(raw, 24));
+    info.swVersionYear = date.year;
+    info.swVersionMonth = date.month;
+    info.swVersionDay = date.day;
     info.deviceTypeId = readU16(raw, 26);
     return info;
 }
@@ -116,6 +123,40 @@ AppliedLimits Device::setLimits(std::uint16_t currentLimitType, std::uint16_t cu
     return applied;
 }
 
+SupportedLimits Device::getSupportedLimits()
+{
+    requireConnected(m_transport);
+
+    QByteArray payload;
+    appendU16(payload, 0);
+    appendU16(payload, 256);
+    QByteArray raw = callMode(*m_transport, static_cast<std::uint8_t>(detail::Mode::ReadFram), payload);
+    if (raw.size() < detail::kLimitsTableByteOffset) {
+        throw ProtocolError(
+            QStringLiteral("unexpected supported-limits response size: %1").arg(raw.size()));
+    }
+
+    static const QHash<std::uint16_t, int> kDivisorByType = {
+        {static_cast<std::uint16_t>(detail::LimitTableType::Voltage), 64},
+        {static_cast<std::uint16_t>(detail::LimitTableType::CurrentTransformer), 512},
+        {static_cast<std::uint16_t>(detail::LimitTableType::CurrentClamp), 512},
+        {static_cast<std::uint16_t>(detail::LimitTableType::CurrentUptt), 512},
+    };
+    auto entries = detail::decodeLimitsTable(raw.mid(detail::kLimitsTableByteOffset), kDivisorByType);
+
+    SupportedLimits limits;
+    for (const auto &[type, value] : entries) {
+        switch (static_cast<detail::LimitTableType>(type)) {
+        case detail::LimitTableType::Voltage: limits.voltage.append(value); break;
+        case detail::LimitTableType::CurrentTransformer: limits.currentTransformer.append(value); break;
+        case detail::LimitTableType::CurrentClamp: limits.currentClamp.append(value); break;
+        case detail::LimitTableType::CurrentUptt: limits.currentUptt.append(value); break;
+        case detail::LimitTableType::NoMoreLimits: break;
+        }
+    }
+    return limits;
+}
+
 AnalogInputs Device::getAnalogInputs()
 {
     requireConnected(m_transport);
@@ -139,6 +180,10 @@ AnalogInputs Device::getAnalogInputs()
     int freqOff = detail::kFooterByteOffset + detail::kField33FrequencyFooterWordOffset * 2;
     double frequency = detail::decodeUFixed(payload.mid(freqOff, 4), 16);
 
+    int limit45Off = detail::kFooterByteOffset + detail::kField45CurrentLimitFooterWordOffset * 2;
+    std::uint16_t limit45 = readU16(payload, limit45Off);
+    int limit46Off = detail::kFooterByteOffset + detail::kField46VoltageLimitFooterWordOffset * 2;
+
     AnalogInputs result;
     result.Ia = rms(detail::ChIa);
     result.Ua = rms(detail::ChUa);
@@ -150,6 +195,9 @@ AnalogInputs Device::getAnalogInputs()
     result.phiIaUa = angle(detail::ChIa);
     result.phiIbUb = angle(detail::ChIb);
     result.phiIcUc = angle(detail::ChIc);
+    result.appliedCurrentLimitType = static_cast<std::uint16_t>((limit45 >> 8) & 0xFF);
+    result.appliedCurrentLimitIndex = static_cast<std::uint16_t>(limit45 & 0xFF);
+    result.appliedVoltageLimitIndex = readU16(payload, limit46Off);
     return result;
 }
 

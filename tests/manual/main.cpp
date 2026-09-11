@@ -7,7 +7,9 @@
 //   manual_test <port> <rs232|usb> info
 //   manual_test <port> <rs232|usb> analog
 //   manual_test <port> <rs232|usb> limits <currentLimitType> <currentLimitIndex> <voltageLimitIndex>
+//   manual_test <port> <rs232|usb> supported
 
+#include <libavm-emon/Calibration.h>
 #include <libavm-emon/Device.h>
 #include <libavm-emon/Exceptions.h>
 
@@ -27,29 +29,62 @@ void printDeviceInfo(const avm_emon::DeviceInfo &info)
     out << "device_type       = " << info.deviceType << Qt::endl;
     out << "serial_number     = " << info.serialNumber << Qt::endl;
     out << "device_type_id    = " << info.deviceTypeId << Qt::endl;
-    out << QString("sw_version_raw    = 0x%1, 0x%2")
+    out << QString("sw_version        = %1 (raw 0x%2, 0x%3)")
+               .arg(info.swVersion)
                .arg(info.swVersionRawWord0, 4, 16, QLatin1Char('0'))
                .arg(info.swVersionRawWord1, 4, 16, QLatin1Char('0'))
         << Qt::endl;
-    out << "  (SW version decoding is unresolved - see mindflow.md)" << Qt::endl;
+    out << QString("sw_version_date   = %1-%2-%3")
+               .arg(info.swVersionYear, 4, 10, QLatin1Char('0'))
+               .arg(info.swVersionMonth, 2, 10, QLatin1Char('0'))
+               .arg(info.swVersionDay, 2, 10, QLatin1Char('0'))
+        << Qt::endl;
+    out << "  (the device's own display may show a second, shorter version number -" << Qt::endl;
+    out << "   that one isn't decoded from anywhere in this 512-byte area, see mindflow.md)" << Qt::endl;
 }
 
-void printAnalogInputs(const avm_emon::AnalogInputs &v)
+void printAnalogInputs(const avm_emon::AnalogInputs &v, const avm_emon::SupportedLimits &limits)
 {
-    out << QString("Ia = %1 A   Ua = %2 V   phi(Ia/Ua) = %3 deg")
+    const avm_emon::CalibratedAnalogInputs cal = avm_emon::calibrate(v, limits);
+
+    out << "raw (pre-calibration):" << Qt::endl;
+    out << QString("  Ia = %1 A   Ua = %2 V   phi(Ia/Ua) = %3 deg")
                .arg(v.Ia, 0, 'f', 4).arg(v.Ua, 0, 'f', 4).arg(v.phiIaUa, 0, 'f', 4)
         << Qt::endl;
-    out << QString("Ib = %1 A   Ub = %2 V   phi(Ib/Ub) = %3 deg")
+    out << QString("  Ib = %1 A   Ub = %2 V   phi(Ib/Ub) = %3 deg")
                .arg(v.Ib, 0, 'f', 4).arg(v.Ub, 0, 'f', 4).arg(v.phiIbUb, 0, 'f', 4)
         << Qt::endl;
-    out << QString("Ic = %1 A   Uc = %2 V   phi(Ic/Uc) = %3 deg")
+    out << QString("  Ic = %1 A   Uc = %2 V   phi(Ic/Uc) = %3 deg")
                .arg(v.Ic, 0, 'f', 4).arg(v.Uc, 0, 'f', 4).arg(v.phiIcUc, 0, 'f', 4)
         << Qt::endl;
-    out << QString("frequency = %1 Hz").arg(v.frequency, 0, 'f', 4) << Qt::endl;
+    out << QString("  frequency = %1 Hz").arg(v.frequency, 0, 'f', 4) << Qt::endl;
     out << Qt::endl;
-    out << "RMS values (Ia/Ib/Ic/Ua/Ub/Uc) are the device's raw pre-calibration" << Qt::endl;
-    out << "reading, not its own front-panel's calibrated value - see Device::getAnalogInputs()'s" << Qt::endl;
-    out << "docstring." << Qt::endl;
+    out << "calibrated (matches the front panel - see md/mindflow.md \"Step 9\"):" << Qt::endl;
+    out << QString("  Ia = %1 A   Ua = %2 V").arg(cal.Ia, 0, 'f', 4).arg(cal.Ua, 0, 'f', 4) << Qt::endl;
+    out << QString("  Ib = %1 A   Ub = %2 V").arg(cal.Ib, 0, 'f', 4).arg(cal.Ub, 0, 'f', 4) << Qt::endl;
+    out << QString("  Ic = %1 A   Uc = %2 V").arg(cal.Ic, 0, 'f', 4).arg(cal.Uc, 0, 'f', 4) << Qt::endl;
+    out << Qt::endl;
+    out << QString("  (active current range: type=%1 index=%2, voltage range index=%3)")
+               .arg(v.appliedCurrentLimitType).arg(v.appliedCurrentLimitIndex).arg(v.appliedVoltageLimitIndex)
+        << Qt::endl;
+}
+
+void printSupportedLimits(const avm_emon::SupportedLimits &limits)
+{
+    auto printList = [](const char *label, const QVector<double> &values) {
+        QStringList parts;
+        for (double v : values)
+            parts << QString::number(v, 'g', 6);
+        out << label << ": " << parts.join(", ") << Qt::endl;
+    };
+    printList("voltage             ", limits.voltage);
+    printList("current_transformer ", limits.currentTransformer);
+    printList("current_clamp       ", limits.currentClamp);
+    printList("current_uptt        ", limits.currentUptt);
+    out << Qt::endl;
+    out << "voltage/current_transformer confirmed against real hardware (md/mindflow.md" << Qt::endl;
+    out << "\"Step 9\"); current_clamp/current_uptt use the same decode formula but are NOT" << Qt::endl;
+    out << "independently confirmed - no clamp/UPTT hardware was available to check." << Qt::endl;
 }
 
 void printAppliedLimits(const avm_emon::AppliedLimits &applied)
@@ -69,6 +104,7 @@ int usage(const char *argv0)
     err << "  " << argv0 << " <port> <rs232|usb> analog" << Qt::endl;
     err << "  " << argv0 << " <port> <rs232|usb> limits <currentLimitType> <currentLimitIndex> <voltageLimitIndex>"
         << Qt::endl;
+    err << "  " << argv0 << " <port> <rs232|usb> supported" << Qt::endl;
     return 2;
 }
 
@@ -108,7 +144,11 @@ int main(int argc, char *argv[])
         if (command == QLatin1String("info")) {
             printDeviceInfo(device.getDeviceInfo());
         } else if (command == QLatin1String("analog")) {
-            printAnalogInputs(device.getAnalogInputs());
+            avm_emon::AnalogInputs values = device.getAnalogInputs();
+            avm_emon::SupportedLimits limits = device.getSupportedLimits();
+            printAnalogInputs(values, limits);
+        } else if (command == QLatin1String("supported")) {
+            printSupportedLimits(device.getSupportedLimits());
         } else if (command == QLatin1String("limits")) {
             if (args.size() < 7) {
                 device.disconnectDevice();

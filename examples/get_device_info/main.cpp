@@ -42,6 +42,12 @@ int main(int argc, char *argv[])
         out << "device_type    = " << info.deviceType << Qt::endl;
         out << "serial_number  = " << info.serialNumber << Qt::endl;
         out << "device_type_id = " << info.deviceTypeId << Qt::endl;
+        out << "sw_version     = " << info.swVersion << Qt::endl;
+        out << QString("sw_version_date = %1-%2-%3")
+                   .arg(info.swVersionYear, 4, 10, QLatin1Char('0'))
+                   .arg(info.swVersionMonth, 2, 10, QLatin1Char('0'))
+                   .arg(info.swVersionDay, 2, 10, QLatin1Char('0'))
+            << Qt::endl;
     } catch (const avm_emon::Exception &e) {
         err << "getDeviceInfo failed: " << e.message() << Qt::endl;
         return 1;

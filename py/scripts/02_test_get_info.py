@@ -31,10 +31,10 @@ def main() -> None:
     print(f"device_type       = {info.device_type!r}")
     print(f"serial_number     = {info.serial_number}")
     print(f"device_type_id    = {info.device_type_id}")
-    print(f"sw_version_raw    = {info.sw_version_raw_words[0]:#06x}, {info.sw_version_raw_words[1]:#06x}")
-    print("  (SW version decoding is unresolved - see mindflow.md; report the raw")
-    print("   words plus what the device's own display/tool shows for the version")
-    print("   so the encoding can be figured out)")
+    print(f"sw_version        = {info.sw_version} (raw {info.sw_version_raw_words[0]:#06x}, {info.sw_version_raw_words[1]:#06x})")
+    print(f"sw_version_date   = {info.sw_version_date[0]:04d}-{info.sw_version_date[1]:02d}-{info.sw_version_date[2]:02d}")
+    print("  (the device's own display may show a second, shorter version number -")
+    print("   that one isn't decoded from anywhere in this 512-byte area, see mindflow.md)")
 
 
 if __name__ == "__main__":

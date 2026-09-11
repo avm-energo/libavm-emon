@@ -26,6 +26,38 @@ wrong that hardware testing caught).
 
 ### Next action (resume point — read this first)
 
+**2026-08-26 update:** investigated a reported frequency discrepancy
+(USB read ~49.3Hz vs. front-panel ~50.0Hz for the same live signal) - see
+"Step 7". Root-caused as a real precision limitation of Mode 3's one-shot
+frequency field, not a decode bug; the field-33 offset was independently
+re-confirmed via a live 50→60→50Hz sweep and a non-nominal 52.347Hz
+front-panel cross-check, then quantified with a proper 40-sample
+statistical read (mean 49.5683Hz, median 49.5015Hz, stdev 0.4392Hz at a
+steady 50.000Hz reference). **Done, including the doc caveat** on
+`AnalogInputs::frequency`/`AnalogInputs.frequency` in both `Types.h` and
+`py/emon/device.py`. The numbered list below (from the 2026-08-19 pause)
+is still exactly as it was, unrelated to this investigation. One new
+minor open item surfaced along the way: rapid
+back-to-back `getAnalogInputs()`/Mode-3 polling with zero spacing
+triggered a worse-than-usual multi-attempt stall once (recovered on its
+own); mitigated ad hoc with a small inter-read delay during this
+session's stats run, but not yet turned into real guidance anywhere in
+the library itself - see the "possible follow-up" note at the end of
+"Step 7" if picking this up later.
+
+**Also this session (Step 8): the SW-version field is resolved** - real
+DAA-digit decode confirmed exactly against the device's own display
+("702.153.519", combining `sw_version="702.153"` with the already-known
+serial number), plus a bonus confirmed SW-version-date decode
+("2014-06-24"). Item #5 in the list below is now struck through/marked
+resolved rather than removed, to keep the list's numbering stable for
+anything referencing it. `DeviceInfo` gained real `sw_version`/
+`sw_version_date` fields (both languages) in place of "raw, unresolved."
+One loose end from this: the device's display shows a *second*, shorter
+version number ("2.01") that doesn't correspond to anything in the
+512-byte system area - likely a separate bootloader/hardware version not
+exposed by this protocol at all; not resolved, not blocking anything.
+
 Session paused here (2026-08-19) with the RS-232 cable unavailable.
 Nothing below blocks using the library for its targeted functions — all
 of it is either an accuracy/completeness gap outside that narrow scope,
@@ -50,9 +82,10 @@ priority order:
 4. **`Maintainer`/`License: GPLv3` in the packaging files** were copied
    from `libavm-gen` as a same-organization assumption, never explicitly
    confirmed as correct for this specific project - worth a quick check.
-5. **SW-version field encoding still unresolved** - real raw words known
-   (`0x0702`, `0x0153`), but no hypothesis tried (including DAA-BCD)
-   decodes them cleanly. See "Step 3.4"/"Step 4.1".
+5. ~~**SW-version field encoding unresolved**~~ **RESOLVED 2026-08-26** -
+   DAA-digit decode of each word (`0x0702`->"702", `0x0153`->"153"),
+   confirmed exactly against the device's own display ("702.153.519",
+   the ".519" being the already-known serial number). See "Step 8".
 6. **Mode 3 payload fields 6-10** (RMS-at-1st-harmonic, RMS line value,
    mean/DC component, mean-rectified value) - offsets genuinely unknown,
    no independent ground truth available to pin them down (front panel
@@ -291,13 +324,15 @@ shorthand notation resolves the layout completely:
   fields), so only (b)'s DAA-digit trick is implemented in `codecs.py`
   (`decode_daa_date`), and it is **not currently wired into
   `get_device_info`** — see the SW-version note below.
-- **SW version field is unresolved.** The two docs disagree on its width
-  (4 bytes vs 8 bytes) and the one worked example given
-  (`0x0704,0x0101 => "707.101"`) doesn't reduce cleanly under DAA, plain
-  hex, or plain decimal reading of either word — it looks like the example
-  itself is wrong or refers to a format not otherwise described. Left
-  unimplemented (`DeviceInfo.sw_version_raw_words` exposes the two raw
-  words) until it can be checked against a real device.
+- **SW version field, originally unresolved here** - the two docs
+  disagree on its width (4 bytes vs 8 bytes) and the one worked example
+  given (`0x0704,0x0101 => "707.101"`) doesn't reduce cleanly under DAA,
+  plain hex, or plain decimal reading of either word - it looks like the
+  example itself is wrong or refers to a format not otherwise described.
+  **Resolved against real hardware in Step 8**: simple per-word DAA-digit
+  decode (the same trick already used for dates), no special-casing
+  needed - the doc's own worked example was just wrong/misleading, not a
+  sign of real format complexity.
 
 ## Step 1 — Response payload layout for Modes 3/4/5
 
@@ -1248,6 +1283,283 @@ prior sessions when phases were wired but simply unloaded - e.g. Step
 in the 1-phase-2-wire configuration at the user's request - not restored
 to the earlier 3-phase-4-wire baseline.
 
+## Step 7 — Frequency (field 33) reads ~1-2% low vs. the front panel; root-caused as device-side measurement noise, not a decode bug (2026-08-26)
+
+Resumed after a gap (the `retomemon`/`libavm-retom` integration projects
+happened in between - out of scope for this file, see their own repos).
+User reported: driving the EMon's inputs from a RETOM-51 reference source
+set to exactly 50.000Hz, `get_analog_inputs()`'s frequency read ~49.285Hz
+over USB, while switching the meter to its own front-panel display mode
+(no USB) showed a precise 49.999-50.001Hz for the *same physical setup*.
+Asked to re-investigate field 33's offset/formula given this gap.
+
+**Session-start snag, unrelated to the actual investigation:** the
+device's own USB port is behind a physical mode switch - display and USB
+are mutually exclusive, and the switch had been left in display mode.
+Symptom was identical total silence to the old RS-232-era debugging
+(`expected 4 header bytes, got 0`); resolved once the user flipped it to
+USB mode. Also hit the familiar "two FTDI adapters, ambiguous port"
+trap again (unrelated leftover adapter plus the device's own FTDI) -
+resolved the same way as before, by unplugging one and observing which
+`/dev/ttyUSB*` node disappeared. **Pattern worth remembering for next
+time:** always re-derive port identity by serial number or plug/unplug,
+never trust `ttyUSB` numbering carrying over between sessions.
+
+**Investigation.** Rather than rely on the user manually setting RETOM
+and reading the front panel by eye (slow, and the display/USB interlock
+above means the panel can't be watched *while* USB is live anyway), drove
+RETOM directly from this session via `linretom.LinRetom51` (the
+`retomemon` process from an earlier session was still holding
+`/dev/ttyUSB2` and had to be stopped first - `fuser -v` found it).
+`RetomConfig`/`LinRetom51` only auto-discover the port by VID:PID
+(`0403:6001`), which is **the same VID:PID as the EMon's own FTDI chip** -
+genuinely ambiguous auto-detection between the two devices. Worked around
+by constructing `FtdiTransport(RETOM_VID, RETOM_PID, port='/dev/ttyUSB2')`
+directly and assigning it over `LinRetom51`'s private `_t` before
+`connect()`, rather than patching linretom's public API (out of scope for
+this repo, and that project is under active independent development).
+
+Applied a balanced 10V/0.1A 3-phase signal at exactly 50.000Hz (via
+`apply()`, phases at 0°/-120°/+120°) and immediately pulled a live Mode 3
+payload from the EMon over USB. RMS fields matched the applied signal
+precisely (`Ua≈10.025, Ia≈0.0998`, consistent with Step 4.3's earlier
+validation and with the current-ratio note in `Types.h`) - confirms the
+signal genuinely reached the meter and the overall pipeline (RETOM →
+meter → our decode) is sound; the investigation is specifically about
+field 33, not a wiring/pipeline problem this time.
+
+Frequency at the existing offset (footer word 39, `frac_bits=16`) read
+**49.154Hz** for this single sample - in the same ~1-2%-low ballpark as
+the user's 49.285Hz and Step 4.3/4.4's historical 49.43/49.37Hz readings.
+Two follow-up tests to distinguish "wrong offset/formula" from "device-
+side measurement noise":
+
+1. **Six consecutive reads with the signal held perfectly steady**
+   (50.000Hz the whole time, `keep_alive()`'d between reads to avoid
+   RETOM's ~10-13s auto-reset): `49.4646, 49.2630, 49.6831, 49.2116,
+   49.8544, 49.6976`. Real jitter (~0.6Hz spread across reads of the
+   *same* nominal signal), not a fixed repeatable number - rules out "a
+   deterministic formula bug would give the same wrong answer every
+   time" in favor of "this field has genuine per-call measurement noise."
+2. **Frequency sweep 50→60→50Hz**, 3 reads at each: `[49.068, 49.647,
+   49.245]` → `[59.526, 59.526, 59.551]` → `[49.174, 49.624, 49.808]`.
+   The offset **tracks the real frequency change precisely** (jumps from
+   ~49 to ~59.5 and back), which conclusively rules out "wrong
+   field/offset" - a wrong byte position would not track a real signal
+   change like this. This is the offset's most direct validation yet,
+   independent of Step 4.3's original single-point match.
+
+**Bias analysis, from the sweep:** at 60Hz the three reads clustered
+tightly (59.526/59.526/59.551, ~0.03Hz spread) with a bias of about
+**-0.47Hz** below true; at 50Hz the bias averaged **-0.5 to -0.9Hz**
+across the various samples. The bias is **roughly constant in absolute
+Hz, not proportional to the true frequency** (a wrong `frac_bits` or
+divisor would produce a *percentage* error that scales with frequency -
+e.g. ~1.2% of 60Hz would be ~0.72Hz, not the ~0.47Hz actually seen).
+Raw `uint32` values behind the 6 steady-state reads (`3241712` to
+`3267258`, vs. `3276800` for an exact 50.000Hz) confirm this isn't
+formula/offset noise - it's the raw device-reported count itself that
+varies call to call, always landing somewhat below the true value, by an
+amount roughly consistent with the field having something like a ~0.5-1Hz
+quantization step and a systematic round-down (floor, not round-to-
+nearest) bias of about half that step.
+
+**Conclusion: not a decode bug.** The offset (word 39) is confirmed
+correct via direct frequency-tracking, not just a plausible-looking
+single-point match. The remaining ~1-2% low bias plus real inter-call
+jitter is best explained by Mode 3's frequency field being a **one-shot,
+relatively coarse measurement** - the vendor docs describe every Mode
+3/4/5 field as a "разовый расчет" (single/one-time calculation), computed
+fresh on each call, as opposed to the front panel's live display, which
+almost certainly free-runs a continuous, long-window-averaged (or
+PLL-tracked) measurement in the background and is therefore both far
+more stable and far more accurate. There is no evidence of a second,
+more-precise frequency field elsewhere in the payload - the whole-payload
+scans in this session and Step 4.3 found nothing else in the plausible
+range that isn't already accounted for by other documented fields.
+
+**Decisive follow-up test, prompted by a sharp question:** the user
+pointed out that the front panel showing an implausibly-exact "50.000Hz"
+every single time was itself suspicious - could the display be snapping
+to/faking a nominal grid frequency instead of genuinely measuring the
+live input? Distinguishing that from "it's just a much more precise
+measurement" needed a non-nominal test frequency, since 50.000Hz can't
+tell the two apart. Held RETOM at an odd, clearly non-nominal **52.347Hz**
+for several minutes (via the same `LinRetom51`/`keep_alive()` approach)
+while the user switched the meter to its front-panel display mode and
+read it directly: **the display showed 52.3459Hz - a match to within
+0.002%.** This rules out "fixed/nominal display" conclusively: the panel
+is genuinely tracking the live input, and doing so far more precisely
+than Mode 3's one-shot field. Combined with the earlier 50→60→50Hz sweep
+(which validated the *offset* by showing Mode 3's field tracks real
+frequency changes, just noisily), the full picture is now settled on both
+sides: word 39 is the right field with real ~1-2% one-shot noise, and the
+front panel is a genuine, high-precision, presumably longer-window/
+PLL-style measurement of the same underlying signal - not a coincidence,
+not a decode bug, and not a fake/nominal display on either side.
+
+**Statistical characterization.** Added the accuracy caveat to
+`AnalogInputs::frequency`/`AnalogInputs.frequency` in `Types.h` and
+`py/emon/device.py` (mirroring the existing RMS pre-calibration note in
+both places), then took 40 consecutive one-shot readings with RETOM held
+steady at exactly 50.000Hz to quantify the noise properly (small samples
+so far - 6 in this session, a handful across historical sessions - had
+been suggestive but not a real distribution). First attempt at zero
+inter-read spacing hit a **worse-than-usual stall**: 4 consecutive
+complete timeouts (32s of total silence, not the usual short-read), on a
+usage pattern (dozens of back-to-back Mode 3 calls with no gap at all)
+that hadn't been stress-tested before this session - the device recovered
+on its own once probed again a bit later with a single simple request.
+Re-ran with a small 0.2s gap between reads and a full port-reopen
+fallback if retries were exhausted (to survive a repeat without losing
+the whole run) - **40/40 succeeded cleanly this time, zero retries, zero
+reopens needed**, at ≈0.42 reads/sec (≈2.4s/read, most of which is Mode
+3's own real computation/response time, not the added gap):
+
+```
+mean   = 49.5683 Hz
+median = 49.5015 Hz
+stdev  = 0.4392 Hz
+min    = 49.0207 Hz
+max    = 50.9115 Hz
+```
+
+Refines the earlier 6-sample read: with a proper sample size the
+distribution looks like genuine, roughly-symmetric one-shot measurement
+noise (σ≈0.44Hz) - a few readings landed *above* 50 (max 50.91), not the
+strictly one-sided "always low" pattern the smaller sample suggested -
+riding on top of a real ~0.43-0.5Hz (~0.9%) low shift in the center
+(mean/median both sit there, not at 50.0). Consistent with, and a more
+rigorous version of, the "one-shot coarse measurement" conclusion above;
+doesn't change it, just replaces "±1-2%, based on a handful of points"
+with an actual measured σ. **Possible follow-up, not done:** the
+back-to-back-call stall risk observed here is a real, previously-
+undocumented interaction between rapid Mode-3 polling and device
+stability, distinct from the already-known Step 4.6/6.1 stall - worth a
+line in `mindflow.md`/`Device.h`/`device.py` recommending callers pace
+repeated `getAnalogInputs()`/`get_analog_inputs()` calls rather than
+hammering them back-to-back, if this library ever grows a polling-loop
+example.
+
+**Second, larger sample (100 reads, same steady 50.000Hz reference,**
+same 0.2s inter-read pacing): **100/100 succeeded cleanly, zero retries,
+zero reopens** this time (the earlier stall didn't recur).
+
+```
+mean   = 49.6394 Hz
+median = 49.6730 Hz
+stdev  = 0.4167 Hz
+min    = 49.0079 Hz
+max    = 50.9819 Hz
+range  = 1.9740 Hz
+```
+
+0.1Hz-bin histogram (per-bin counts, `[lo,hi)`):
+`[49.0,49.1)=8 [49.1,49.2)=6 [49.2,49.3)=11 [49.3,49.4)=9 [49.4,49.5)=4
+[49.5,49.6)=8 [49.6,49.7)=8 [49.7,49.8)=17 [49.8,49.9)=11 [49.9,50.0)=6
+[50.0,50.1)=3 [50.1,50.2)=0 [50.2,50.3)=2 [50.3,50.4)=2 [50.4,50.5)=1
+[50.5,50.6)=0 [50.6,50.7)=0 [50.7,50.8)=2 [50.8,50.9)=0 [50.9,51.0)=2`.
+
+Consistent with the 40-sample run (mean/median/stdev all within ~0.1Hz of
+each other across the two independent samples) - not a fluke. Shape is a
+rough, somewhat left-of-50-skewed hump concentrated in 49.0-50.0Hz (86 of
+100 readings), with a thin, scattered tail out to nearly 51Hz rather than
+a clean symmetric bell curve or a hard floor - consistent with "real
+one-shot measurement noise with a systematic low center," not with a
+simple fixed-offset bug (which wouldn't produce this much spread) or with
+truncation-only noise (which would show a hard wall at 50.0 with nothing
+above it - it doesn't; 14 of 100 readings exceed 50.0).
+
+**Third sample, another 100 reads, same setup** (steady 50.000Hz, same
+0.2s pacing): **100/100 succeeded cleanly again**, zero retries/reopens.
+
+```
+mean   = 49.5818 Hz
+median = 49.5309 Hz
+stdev  = 0.4557 Hz
+min    = 49.0028 Hz
+max    = 50.9991 Hz
+```
+91/100 below 50.0Hz (vs. 86/100 in the previous 100-sample run - some
+run-to-run variation in the tail proportion, same overall shape).
+
+**Notable pattern across all three independent samples so far (n=40,
+100, 100):** mean/median cluster tightly (49.50-49.67Hz, i.e. within
+~0.17Hz of each other across all three runs) and stdev is consistently
+0.42-0.46Hz - reproducible, not a fluke of any one run. More strikingly,
+**the min and max are suspiciously stable too**: min landed at 49.0207,
+49.0079, 49.0028Hz across the three runs (all within 0.02Hz of each
+other), and max at 50.9115, 50.9819, 50.9991Hz (within 0.09Hz of each
+other) - despite each run being 40-100 independent one-shot
+measurements. Unbounded/Gaussian-like noise would be expected to
+occasionally produce a wider outlier as sample size grows (more samples
+= more chances to see the tail); instead the extremes stay pinned to
+almost the same values every time. This looks less like open-ended
+random noise and more like **the measurement or its reporting has a
+real, roughly-±2%-wide bound** (something clamping/saturating raw values
+to within about 49.0-51.0Hz of a nominal-50Hz lock), though the exact
+mechanism (ADC/counter range limit, an internal “close enough to
+nominal” snap-and-clamp, or something else in the one-shot calculation)
+hasn't been identified and would need lower-level access (e.g. varying
+the *true* input frequency further from 50Hz, or firmware-level
+information) to pin down further. Not pursued further this session -
+flagging as a genuinely interesting open detail for whoever picks this
+up next, not a blocker for anything.
+
+**Mode 5 cross-check.** User noted the vendor docs list field 33
+(frequency) at the same footer position for Mode 5 too (docs: Mode 5
+averages over a shorter ~0.32s window, vs. Mode 3's fuller/slower
+computation) - worth checking whether Mode 5 gives a cleaner reading, or
+whether Mode 3's frequency value is really just reusing the same
+underlying routine as Mode 5 (consistent with Mode 3 being documented as
+effectively the union of Mode 4's and Mode 5's field coverage). Ran 20
+reads of each, back-to-back in the same session, same steady 50.000Hz
+reference, same word-39 offset:
+
+```
+                Mode 5 (CALC_HARMONICS)   Mode 3 (CALC_ALL)
+mean            49.7445 Hz                49.4956 Hz
+median          49.4948 Hz                49.4720 Hz
+stdev           0.5570 Hz                 0.3865 Hz
+min / max       49.0467 / 50.7819 Hz      49.0500 / 50.6192 Hz
+reads/sec       1.149                     0.418
+```
+
+Mode 5 is ~2.75x faster per read (matches the docs' shorter averaging
+window claim) but **statistically the same character of noise** - same
+low-shifted center (~49.5Hz vs the true 50.0), same rough range
+(~49.0-50.8Hz), same order of magnitude of jitter (Mode 5 slightly
+noisier, consistent with less averaging). No evidence Mode 5 is either
+more accurate or fundamentally different - supports "Mode 3's frequency
+field reuses the same underlying quick-calc routine as Mode 5" rather
+than "Mode 3 has its own separate, buggier frequency calculation."
+Practical takeaway: switching to Mode 5 buys polling speed (useful if a
+caller wants faster, if noisier, frequency-only updates without the rest
+of Mode 3's payload) but not accuracy - the ±1-2%/σ≈0.4-0.5Hz
+characterization applies to both modes, not just Mode 3.
+
+**Practical implications for `get_analog_inputs()` callers:** field 33
+should be treated as accurate to roughly **±1-2%** (not the sub-0.01%
+implied by comparing it to a front-panel reading), consistent with the
+existing "raw pre-calibration" caveat already on `AnalogInputs`. If a
+caller needs better frequency precision than that, averaging multiple
+consecutive Mode 3 calls narrows the *jitter* but did not fully remove
+the *bias* in this session's samples (a 6-sample average was still
+~49.53Hz, ~0.9% low) - so averaging alone is not a full fix; there is no
+known way to get front-panel-grade frequency precision through this
+protocol field. Worth documenting on `AnalogInputs::frequency` /
+`AnalogInputs.frequency` directly (not yet done as of this entry) so
+future callers don't rediscover this by surprise.
+
+No code changes made this session (RETOM was disconnected from EMon and
+returned to a stopped state via `safety_stop()`/`disconnect()`
+afterward) - this was purely an investigation to confirm/refute a
+suspected offset bug, and it came back "the offset is right, the
+underlying field is just imprecise by design." Next step, if the user
+wants it: add the accuracy caveat to `Types.h`/`Types.py`'s
+`AnalogInputs.frequency` docstring, mirroring how the RMS pre-calibration
+caveat is already documented there.
+
 ## Open questions for hardware validation (step 4)
 
 1. ~~Which CRC16 variant?~~ **Resolved** — CRC-16/XMODEM, big-endian on
@@ -1295,3 +1607,239 @@ to the earlier 3-phase-4-wire baseline.
    Would need a different tap (HHD "both directions" setting if one
    exists, or a physical RS-232 tap) to resolve directly; otherwise rely
    on the (now 3-for-3) payload-size matches as indirect confirmation.
+
+## Step 8 — SW version field resolved against real hardware (2026-08-26)
+
+Continuing the same session as Step 7. User asked to read device info
+"as stated in vendor docs" - ran `get_device_info()`/`getDeviceInfo()`
+against the live device (still on `/dev/ttyUSB0`, USB/3,000,000-baud/8N2)
+and got the same values seen in every prior session (Steps 3.4/4.1):
+`device_type="EM3.1KM - 02"`, `serial_number=519`, `device_type_id=3`,
+`sw_version_raw=(0x0702, 0x0153)` - good consistency confirmation, but
+nothing new until two things happened:
+
+1. **Noticed a previously-unremarked oddity**: the docs' lookup table for
+   `device_type_id` says `3 = ЭМ3.3Т, 2 = ЭМ3.2`, but this unit's own name
+   string says `EM3.1KM`, not `EM3.3T`. Flagged to the user as a genuine
+   discrepancy between what the doc's small ID table claims and what this
+   device actually reports - not resolved, just surfaced (plausibly the
+   ЭМ‑3.1КМ/ЭМ‑3.3Т variants share a type ID for some internal reason;
+   the docs don't say enough to know).
+2. **User provided ground truth from the device's own display**: it
+   shows two version-looking numbers, `2.01` and `702.153.519`, and
+   wasn't sure why there were two. This unlocked the SW-version field.
+
+**The decode**: DAA-digit-decoding each raw word directly (`f"{word:04x}"`,
+the exact same trick already used and confirmed for date fields elsewhere
+in this protocol - see Step 1) gives `0x0702` -> `"0702"` -> **702**, and
+`0x0153` -> `"0153"` -> **153**. Combined with the already-known
+`serial_number=519`, that's **"702.153.519" - an exact match** to the
+longer of the two numbers on the display. The doc's own worked examples
+for this field (`0x0704,0x0101 => "707.101"`, etc.) were simply
+misleading/wrong - no special multi-format handling was ever needed, just
+the same plain DAA-digit decode used everywhere else in this protocol.
+Re-reading the doc's own words-per-version-era table with fresh eyes
+after having the real answer: it's plausible those "704.101"-style
+examples were never meant to describe *this* device's exact field at all,
+just illustrate the general DAA convention loosely - not worth more
+excavation now that real hardware has settled it unambiguously.
+
+**Bonus, unprompted confirmation**: the field immediately following the
+version words (already hypothesized as a "SW version date," 2-word DAA,
+never wired into `get_device_info` before this session - see Step 1)
+decodes via the *same already-existing* `decode_daa_date`/equivalent to
+**2014-06-24** - a genuinely plausible real calendar date, not garbage.
+Strong independent evidence the whole offset/DAA-convention picture in
+this area of the FRAM system area is right, not a lucky one-field
+coincidence.
+
+**The shorter "2.01" display value remains unexplained** - nothing in
+the 512-byte system-area dump (re-fetched fresh this session, raw hex
+dumped in full for offsets 0-64) corresponds to "2" and "01" anywhere
+near the version/date/type fields. `device_type_id` itself is `3`, not
+`2`, ruling out the obvious confusion. Most likely explanation: a
+separate bootloader/hardware-revision version that this protocol simply
+doesn't expose at all (common in embedded devices - bootloader version is
+often burned into a region the application-level read commands can't
+reach). Not pursued further - no lead to chase without either the
+vendor's own tooling or firmware-level access neither of which is
+available here.
+
+**Code changes**: added `DeviceInfo.sw_version`/`.swVersion` (decoded
+string, e.g. `"702.153"`) and `.sw_version_date`/`.swVersionYear`+
+`Month`+`Day` (decoded date) to both `py/emon/device.py` and
+`include/libavm-emon/Types.h`, alongside the existing raw words (kept for
+transparency, same pattern as every other decoded field in this
+project). Added `decodeDaaDigitString`/`decodeDaaDate` to the C++
+`Codecs.h`/`.cpp` (Python already had `decode_daa_digit_string`/
+`decode_daa_date` from Step 1, just never wired up before now). Updated
+`scripts/02_test_get_info.py`, `examples/get_device_info/main.cpp`, and
+`tests/manual/main.cpp` to print the decoded values instead of "raw,
+unresolved." Verified end to end against the real device on both
+languages - `py/scripts` ad hoc check and both C++ tools all print
+`sw_version=702.153`, `sw_version_date=2014-06-24`, matching each other
+and the display. C++ side rebuilt clean (`ninja`) after every edit; a
+handful of clangd single-file diagnostics appeared during editing
+("Device.h file not found", undeclared `avm_emon`/`Qt::endl`/
+`QStringLiteral", etc.) but are a broken isolated-index artifact, not
+real - confirmed by every actual `ninja` build succeeding throughout.
+
+## Step 9 — Current/voltage limits table decoded; raw-vs-calibrated ratio fully explained (2026-08-26)
+
+Continuing the same session. Asked to develop the offset-44 "supported
+limits" table and figure out its practical meaning, after Step 8's
+static decode of `Types.h`'s "Коэффициент приведения I/U" (432/436) came
+back as **literally zero on this unit** - confirmed by direct read, so
+those fields are ruled out as the source of Step 4.3's observed ~10x
+raw-to-display current scaling; they're simply unpopulated on this
+firmware/config.
+
+**User provided real ground truth from the device's own menu**: voltage
+limits `240,120,60,30,10,5,2,1` V, current limits
+`100,50,25,10,5,2.5,1,0.5,0.25,0.1,0.05` A (7 whole-amp values + 4
+milliamp values). This is exactly the kind of independent reference this
+table needed - decoding it blind (like the frequency field originally)
+wasn't converging.
+
+**Decode, fully confirmed against both lists:**
+- Table starts at offset 44 as documented, but is **variable-length,
+  terminated by a `type=0` entry** - it genuinely does spill into the
+  doc's mislabeled "98: РЕЗЕРВ (150 bytes)" region, exactly as the doc's
+  own "Сколько влезет!" ("however much fits!") comment hinted. Read
+  offsets 44 through 248 in one pass to capture the whole thing.
+- **Voltage (`type=1` in this table's own numbering, 8 entries):** raw
+  int-words `15360,7680,3840,1920,640,320,128,64`, each divided by
+  **64**, give exactly `240,120,60,30,10,5,2,1` - **8/8 exact match**.
+- **Current transformers (`type=2`, 11 entries):** raw int-words divided
+  by **512** (a different divisor than voltage's 64) give
+  `100,50,25,10,5,2.5,1,0.5,0.25,0.0996,0.0488`. The last two needed the
+  fractional word too - full formula
+  `value = int_word/512 + frac_word/(512*65536)` - which turns
+  `0.0996+0.00039=0.1` and `0.0488+0.00117=0.05` **exact**. **11/11 exact
+  match**, including both fractional-correction cases landing precisely
+  on the target.
+- General formula, by extension: `value = int_word/D + frac_word/(D*65536)`,
+  `D=64` for voltage, `D=512` for current-transformer entries. Two more
+  categories exist in the table (`type=3` "clamps", 5 entries; `type=4`
+  "УПТТ", 8 entries, the last matching the CT category's tail exactly) -
+  not independently confirmed against ground truth (the user's two lists
+  covered voltage and CT current only), left as unconfirmed-but-plausible
+  since the same formula family is almost certainly at play.
+- This resolves **item #6** from "Current status" (fields 6-10's
+  independent-ground-truth problem was about *other* Mode 3 fields, not
+  this table, but the same "no way to verify without real reference data"
+  pattern applied here until now).
+
+**Connecting this to the actual practical question (why does raw ≠
+front-panel-calibrated?):** the known active setting from earlier
+sessions is `current_limit_index=3`, which is exactly the **10A** entry
+in the CT category (0-indexed: 100,50,25,**10**,5,2.5,1,0.5,0.25,0.1,0.05).
+Step 4.3's real measurement showed the front panel reading was almost
+exactly **10x** the raw reading (0.998V vs 0.0998A raw) - not a
+coincidence. Hypothesis: `calibrated_I = raw_I * (selected_CT_rating_A / 1A)`,
+"1A" being the assumed standard CT secondary convention; voltage gets no
+such multiplication (Step 4.3 also showed `Ua` raw matched the panel
+exactly, no scaling), consistent with voltage limits being an ADC-range/
+precision selector rather than a transformer-ratio concept.
+
+**Tested it directly**: held RETOM at a steady ~0.5A on phase A, cycled
+`set_current_limits(type=0, index, 0)` through CT-category indices 0
+(100A), 3 (10A), 6 (1A), 7 (0.5A), re-reading raw `Ia` after each:
+
+```
+index=0 (100A rating): raw Ia = 0.00000 A
+index=3 (10A rating):  raw Ia = 0.49978 A
+index=6 (1A rating):   raw Ia = 0.49981 A
+index=7 (0.5A rating): raw Ia = 0.49979 A
+```
+
+**Raw stayed essentially constant (~0.4998A) across the 10A/1A/0.5A
+selections** - direct proof that `current_limit_index` does NOT change
+the raw ADC scaling at all; it's a pure configuration value (telling the
+device what CT ratio to *assume* is physically installed), not a
+measurement-range switch. The 100A-range zero isn't a contradiction -
+0.5A is 0.5% of a 100A range, almost certainly below that range's
+resolution floor, and RETOM's own `max_i=2.0A` config means a proper
+high-range test (e.g. 50A) isn't reachable on this bench at all - flagged
+as an inherent test-rig limitation, not a finding.
+
+**Conclusion, now fully closing the "raw pre-calibration" story that's
+been on `AnalogInputs` since Step 4.3:**
+- `Ia/Ib/Ic/Ua/Ub/Uc` are always the true secondary-side/ADC measurement,
+  independent of any limit configuration - confirmed directly, not just
+  inferred.
+- `calibrated_I = raw_I * (rating_from_table[active_current_limit_index] / 1A)`.
+- `calibrated_U = raw_U` (no scaling).
+- The active `current_limit_index`/`voltage_limit_index` are already
+  exposed two ways: `SetLimits`'s own echo (`AppliedLimits`), and Mode
+  3's footer fields 45/46 (already decoded nowhere in `device.py`/
+  `Device.cpp` yet, despite being in `pseudocode.md`'s table - a small
+  gap worth closing if calibrated output is implemented).
+
+**Not yet implemented in the library** - this session was analysis/
+verification only, no code changes. If picked up later: would need (a) a
+`decodeCurrentLimitsTable()`/`decode_current_limits_table()` helper
+(offset 44, variable-length until `type=0`), (b) reading fields 45/46
+from the Mode 3 footer (offsets already known, just never wired to
+anything), and (c) a `calibrated`-flavored accessor or documented
+formula so callers don't have to do the multiplication by hand. Worth
+discussing scope with the user before implementing (e.g. does the C++
+API need a whole new type, or is a documented formula enough?).
+
+## Step 10 — Calibration implemented and verified in both languages (2026-08-26)
+
+User asked to implement Step 9's findings. Same session, continuing
+directly.
+
+**Python (`py/emon/`):**
+- `constants.py`: `FIELD45_CURRENT_LIMIT_FOOTER_WORD_OFFSET`/
+  `FIELD46_VOLTAGE_LIMIT_FOOTER_WORD_OFFSET` (64/65), `LimitTableType`,
+  `LIMIT_TABLE_DIVISOR`, `LIMITS_TABLE_BYTE_OFFSET` (44).
+- `codecs.py`: `decode_limits_table(raw, divisor_by_type)` - generic
+  variable-length decoder, stops at a type=0 entry.
+- `device.py`: new `SupportedLimits` dataclass (4 lists, `current_list_for()`
+  helper), new `CalibratedAnalogInputs` dataclass, new module-level
+  `calibrated_current()`/`calibrated_voltage()`/`calibrate()` functions,
+  `EMonDevice.get_supported_limits()`, and `AnalogInputs` gained
+  `applied_current_limit_type`/`_index`/`applied_voltage_limit_index`
+  (decoded in `get_analog_inputs()` from footer words 64/65).
+- `scripts/04_test_get_analog_inputs.py` updated to print both raw and
+  calibrated values plus the active range.
+
+**C++ (`include/libavm-emon/`, `src/`):** mirrored exactly -
+`Constants.h` (same offsets/enum), `Codecs.h/.cpp`
+(`decodeLimitsTable`), `Types.h` (`SupportedLimits` with
+`currentListFor()`, `CalibratedAnalogInputs`, `AnalogInputs` gained the
+three applied-limit fields), new `Calibration.h`/`Calibration.cpp`
+(free functions `calibratedCurrent`/`calibratedVoltage`/`calibrate` -
+a new file pair rather than cramming into `Types.h`, matching the
+project's one-feature-per-file convention), `Device::getSupportedLimits()`,
+`Device::getAnalogInputs()` updated for fields 45/46. `examples/get_analog_inputs`
+and `tests/manual_test` (new `supported` subcommand, `analog` now prints
+calibrated values + active range too). No `CMakeLists.txt` change needed -
+sources are globbed.
+
+**Verification, both languages, against real hardware:**
+- `get_supported_limits()`/`getSupportedLimits()` reproduce the exact
+  same 4 lists as the ad hoc Step 9 analysis (voltage/CT confirmed 19/19
+  against user-provided ground truth; clamp/UPTT decoded but unconfirmed,
+  as before).
+- Baseline (no live signal): `applied_current_limit_type=0`,
+  `applied_current_limit_index=3`, `applied_voltage_limit_index=0` -
+  matches every prior session.
+- **Live test with RETOM held at 10V/0.1A/50Hz**, run through the actual
+  compiled C++ library (`tests/manual_test ... analog`), not just the ad
+  hoc scripts: `raw Ia=0.0998A -> calibrated Ia=0.9980A`,
+  `Ua=10.0249V` unchanged raw vs. calibrated - matches Step 4.3's
+  original front-panel observation (~0.998A) almost exactly. Python
+  path verified identically beforehand (`cal.Ia=0.99815`). Needed a
+  synchronization marker file to get the timing right - `LinRetom51.connect()`'s
+  enable/calibration replay took longer than an 8s guess allowed for on
+  one attempt (zeros came back because the manual_test ran before
+  `apply()` had actually landed), not a defect in the library under test.
+
+This closes out the "raw pre-calibration" caveat as an actual library
+feature, not just documentation - `AnalogInputs`'s docstring/comment
+should probably now point callers at `calibrate()` explicitly, which it
+doesn't yet (both languages still just describe the raw-value caveat,
+not the fix). Minor follow-up if picked up later.

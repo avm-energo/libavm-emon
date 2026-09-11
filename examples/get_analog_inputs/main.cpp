@@ -18,6 +18,7 @@
 // Usage:
 //   get_analog_inputs <port> <rs232|usb>
 
+#include <libavm-emon/Calibration.h>
 #include <libavm-emon/Device.h>
 #include <libavm-emon/Exceptions.h>
 
@@ -68,6 +69,16 @@ int main(int argc, char *argv[])
         }
     }
 
+    avm_emon::SupportedLimits limits;
+    if (ok) {
+        try {
+            limits = device.getSupportedLimits();
+        } catch (const avm_emon::Exception &e) {
+            err << "getSupportedLimits failed: " << e.message() << Qt::endl;
+            ok = false;
+        }
+    }
+
     device.disconnectDevice();
 
     if (!ok) {
@@ -75,19 +86,24 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    // Ia/Ib/Ic/Ua/Ub/Uc are the device's raw pre-calibration reading, not
-    // the calibrated value its own front panel shows - see
-    // Device::getAnalogInputs()'s docstring. phi values are in degrees.
-    out << QString("Ia = %1 A   Ua = %2 V   phi(Ia/Ua) = %3 deg")
+    const avm_emon::CalibratedAnalogInputs cal = avm_emon::calibrate(values, limits);
+
+    out << "raw (pre-calibration):" << Qt::endl;
+    out << QString("  Ia = %1 A   Ua = %2 V   phi(Ia/Ua) = %3 deg")
                .arg(values.Ia, 0, 'f', 4).arg(values.Ua, 0, 'f', 4).arg(values.phiIaUa, 0, 'f', 4)
         << Qt::endl;
-    out << QString("Ib = %1 A   Ub = %2 V   phi(Ib/Ub) = %3 deg")
+    out << QString("  Ib = %1 A   Ub = %2 V   phi(Ib/Ub) = %3 deg")
                .arg(values.Ib, 0, 'f', 4).arg(values.Ub, 0, 'f', 4).arg(values.phiIbUb, 0, 'f', 4)
         << Qt::endl;
-    out << QString("Ic = %1 A   Uc = %2 V   phi(Ic/Uc) = %3 deg")
+    out << QString("  Ic = %1 A   Uc = %2 V   phi(Ic/Uc) = %3 deg")
                .arg(values.Ic, 0, 'f', 4).arg(values.Uc, 0, 'f', 4).arg(values.phiIcUc, 0, 'f', 4)
         << Qt::endl;
-    out << QString("frequency = %1 Hz").arg(values.frequency, 0, 'f', 4) << Qt::endl;
+    out << QString("  frequency = %1 Hz").arg(values.frequency, 0, 'f', 4) << Qt::endl;
+    out << Qt::endl;
+    out << "calibrated (matches the front panel - see md/mindflow.md \"Step 9\"):" << Qt::endl;
+    out << QString("  Ia = %1 A   Ua = %2 V").arg(cal.Ia, 0, 'f', 4).arg(cal.Ua, 0, 'f', 4) << Qt::endl;
+    out << QString("  Ib = %1 A   Ub = %2 V").arg(cal.Ib, 0, 'f', 4).arg(cal.Ub, 0, 'f', 4) << Qt::endl;
+    out << QString("  Ic = %1 A   Uc = %2 V").arg(cal.Ic, 0, 'f', 4).arg(cal.Uc, 0, 'f', 4) << Qt::endl;
 
     return 0;
 }
