@@ -1,17 +1,17 @@
 # libavm-emon
 
-Protocol library for the ЭМ‑3.1КМ ("EMon") power-quality meter, for
-AVM-Energo projects. Talks to the device over either RS-232 or USB (the
-device's own USB port, not a generic virtual-COM assumption - see
-`md/mindflow.md` "Step 5" for how that was confirmed) and implements the
+[![pipeline status](https://git.avmenergo.ru/avm-energo/libavm-emon/badges/master/pipeline.svg)](https://git.avmenergo.ru/avm-energo/libavm-emon/-/pipelines)
+[![latest release](https://git.avmenergo.ru/avm-energo/libavm-emon/-/badges/release.svg)](https://git.avmenergo.ru/avm-energo/libavm-emon/-/releases)
+
+Русская версия: [README-ru.md](README-ru.md)
+
+This software was made by AVM-Energo LLC with the help of Claude.
+
+**libavm-emon** is a protocol library for the ЭМ‑3.1КМ ("Energomonitor") power-quality meter, for
+AVM-Energo projects. It talks to the device over either RS-232 or USB (the
+device's own USB port, not a generic virtual-COM assumption and implements the
 three functions this project currently targets: `GetDeviceInfo`,
 `SetLimits`, `GetAnalogInputs`.
-
-A parallel Python implementation (`py/`) was used to reverse-engineer and
-validate the protocol before this library was ported from it - see
-`md/mindflow.md` for the full story, including every protocol detail the
-vendor documentation got wrong and how each was found against real
-hardware.
 
 # Requires
 
@@ -77,25 +77,17 @@ runnable programs, including the outer-retry pattern recommended for
 | Framing    | 8N1     | 8N2           |
 | `LinkType` | `Rs232` | `Usb`         |
 
-Both confirmed against real hardware - see `md/mindflow.md` "Step 3.1"
-and "Step 5" for how.
-
-# Known limitations
-
-- `getAnalogInputs()`'s ~4.5KB response occasionally stalls mid-transfer
-  over USB - a real, confirmed characteristic of that link at 3,000,000
-  baud (reproduced identically with a completely independent Python
-  serial library, so it isn't specific to this library or to Qt), not a
-  bug here. `Transport::request()` retries internally (5 attempts by
-  default) to absorb this; application code calling `getAnalogInputs()`
-  should still be prepared for an occasional outer-level retry - see
-  `examples/get_analog_inputs/` and `md/mindflow.md` "Step 6.1".
-- The device's SW-version field and a handful of `getAnalogInputs()`
-  harmonic/mean-value fields (not exposed by this library's narrow API)
-  remain unresolved - see `md/mindflow.md`'s "Open questions" section.
 
 # Packaging
 
-`package/` holds Debian (`debian`/`debian-dev`) and RPM (`rpm/rpmbuild`)
-packaging sources, matching the convention used across AVM-Energo's other
-C++ libraries (see `libavm-gen`).
+Linux packages are built by CI (`.gitlab-ci.yml`) with CPack: `libavm-emon` (runtime, the shared library) and
+`libavm-emon-dev` (`.deb`) / `libavm-emon-devel` (`.rpm`) (static library, headers, CMake package files). To build them
+locally:
+
+```bash
+$ cmake -B build -S . -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr
+$ cmake --build build
+$ cd build && cpack -G DEB   # or -G RPM
+```
+
+Packages of every tagged version are listed on the [Releases page](https://git.avmenergo.ru/avm-energo/libavm-emon/-/releases).
