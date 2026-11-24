@@ -1843,3 +1843,48 @@ feature, not just documentation - `AnalogInputs`'s docstring/comment
 should probably now point callers at `calibrate()` explicitly, which it
 doesn't yet (both languages still just describe the raw-value caveat,
 not the fix). Minor follow-up if picked up later.
+
+## Step 11 - Correction: the current range is NOT a CT ratio (2026-11-24)
+
+**Step 9/10's `calibrated_I = raw_I * range_rating` was wrong and has been
+removed.** Evidence:
+- With the range set to 5 A and a real current of 0.299 A, the old
+  `calibrate()` displayed 1.49 A (0.2985 * 5) while the real/front-panel
+  value was 0.299 A, i.e. the raw field is already the true current.
+- Device manual (`emon/re-em-3.1km-red8.pdf`), 4.2.3 "Установка пределов":
+  the limits are measurement ranges of the input channels (relays switch
+  them); accuracy is specified from 0.2*In to 1.2*In of the selected
+  range; the model codes list the same In values (0.05 ... 100 A) as the
+  decoded table. The meter-constant formula uses the range limits too.
+  Nothing describes a transformer ratio.
+- Step 9's own cycling test already showed raw constant across ranges
+  (consistent with raw = true amps).
+
+The "front panel showed ~10x raw" observation in Step 4.3 had some other
+cause (not identified; probably the signal level actually applied in
+that session). `calibrate()`/`calibratedCurrent()` are now identity
+functions kept only for source compatibility.
+
+## Step 12 - Field 12 (angle between phase voltages) found (2026-11-24)
+
+With RETOM driving three phases (voltages at 0 / -90 / -200 deg) a raw Mode 3
+payload was dumped (`manual_test ... dump`, `Device::getAnalogInputsRaw()`)
+and every 2-word window of words 205..238 of each block was decoded as
+signed 16.16. In the three U blocks the same offset holds exactly the
+expected angles:
+
+| block | word offset | value | expected |
+|---|---|---|---|
+| Ua | 217 | 90.000  | UA1-UB1 = 90 |
+| Ub | 217 | 109.000 | UB1-UC1 = 110 |
+| Uc | 217 | 159.000 | UC1-UA1 = 160 |
+
+So **field 12 is at word 217, 2 words, signed 16.16 degrees, in the U blocks**:
+Ua block = UA1-UB1, Ub block = UB1-UC1, Uc block = UC1-UA1 - the three
+angles of the device's "Углы" screen (manual 4.3.1.3). Positive UA1-UB1
+means UB lags UA. (The 109/159 vs 110/160 deviation of ~1 deg: three values
+sum to 358, not 360; cause not investigated - source (RETOM) or device
+accuracy.) Decoded as `AnalogInputs::phiUaUb/phiUbUc/phiUcUa`.
+
+Observation, not yet understood: in the I blocks the word at 217 holds
+119.35 / 120.31 / 120.32 (the currents' angles were not recorded).

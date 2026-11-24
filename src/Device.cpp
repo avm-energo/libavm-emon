@@ -157,6 +157,12 @@ SupportedLimits Device::getSupportedLimits()
     return limits;
 }
 
+QByteArray Device::getAnalogInputsRaw()
+{
+    requireConnected(m_transport);
+    return callMode(*m_transport, static_cast<std::uint8_t>(detail::Mode::CalcAll));
+}
+
 AnalogInputs Device::getAnalogInputs()
 {
     requireConnected(m_transport);
@@ -174,6 +180,11 @@ AnalogInputs Device::getAnalogInputs()
     };
     auto angle = [&payload](int channelIndex) {
         int off = detail::channelBlockByteOffset(channelIndex) + detail::kField11AngleWordOffset * 2;
+        return detail::decodeSignedFixed(payload.mid(off, 4), 16, 32);
+    };
+
+    auto uuAngle = [&payload](int channelIndex) {
+        int off = detail::channelBlockByteOffset(channelIndex) + detail::kField12AngleUuWordOffset * 2;
         return detail::decodeSignedFixed(payload.mid(off, 4), 16, 32);
     };
 
@@ -195,6 +206,9 @@ AnalogInputs Device::getAnalogInputs()
     result.phiIaUa = angle(detail::ChIa);
     result.phiIbUb = angle(detail::ChIb);
     result.phiIcUc = angle(detail::ChIc);
+    result.phiUaUb = uuAngle(detail::ChUa);
+    result.phiUbUc = uuAngle(detail::ChUb);
+    result.phiUcUa = uuAngle(detail::ChUc);
     result.appliedCurrentLimitType = static_cast<std::uint16_t>((limit45 >> 8) & 0xFF);
     result.appliedCurrentLimitIndex = static_cast<std::uint16_t>(limit45 & 0xFF);
     result.appliedVoltageLimitIndex = readU16(payload, limit46Off);

@@ -38,9 +38,8 @@ RESPONSE_PAYLOAD_BYTES = (WORDS_PER_CHANNEL_BLOCK * len(CHANNEL_BLOCKS) + FOOTER
 # later - Ua at offset 205 decodes (frac_bits=20) to 10.0247, matching the
 # meter's own front-panel reading to all 4 decimal digits; Ia at the same
 # offset decodes to 0.0998, matching the ~0.1A actually fed in (this is
-# the RAW pre-calibration value - the front panel's 0.998A applies the
-# device's own internal current-ratio setting on top, which this protocol
-# field does not do). Some field in 1-4 is undercounted by one word in the
+# the value in amperes; the earlier "front panel shows 0.998A" note was a
+# misreading, see mindflow.md "Step 11"). Some field in 1-4 is undercounted by one word in the
 # original doc-derived table; fields 6+ have not been individually
 # reverified and may need the same +1 shift - see mindflow.md.
 FIELD5_RMS_WORD_OFFSET = 205
@@ -57,6 +56,10 @@ FIELD5_RMS_WORD_OFFSET = 205
 # **The value is in DEGREES, not radians** - `device.py`'s `phi_*`
 # fields and this comment previously assumed radians; see its docstring.
 FIELD11_ANGLE_UI_WORD_OFFSET = 215
+# Field 12 (angle between phase voltages), U blocks only: Ua block = UA1-UB1,
+# Ub block = UB1-UC1, Uc block = UC1-UA1; degrees, signed 16.16. Found with
+# voltages at 0/-90/-200 deg - mindflow.md "Step 12".
+FIELD12_ANGLE_UU_WORD_OFFSET = 217
 # Word offset of field 33 ("частота") inside the footer section.
 #
 # CORRECTED against real hardware (md/mindflow.md "Step 4.3"): scanning

@@ -105,17 +105,19 @@ class AnalogInputs:
     # The limit configuration active when this reading was taken (fields
     # 45/46, footer word offsets 64/65 - CONFIRMED unshifted from the doc
     # against Mode 2's own echo, see mindflow.md "Step 4.2"). Needed to
-    # turn Ia/Ib/Ic/Ua/Ub/Uc into calibrated values via `calibrate()` -
-    # see mindflow.md "Step 9".
+    # know which range the reading was taken in - see mindflow.md "Step 11".
     applied_current_limit_type: int  # Mode 2 numbering: 0=transformer,1=clamp,2=UPTT
     applied_current_limit_index: int
     applied_voltage_limit_index: int
+    # Angles between phase voltages, degrees: UA1-UB1, UB1-UC1, UC1-UA1 (mindflow.md "Step 12").
+    phi_ua_ub: float = 0.0
+    phi_ub_uc: float = 0.0
+    phi_uc_ua: float = 0.0
 
 
 @dataclass
 class CalibratedAnalogInputs:
-    """`AnalogInputs`, scaled to match the device's own front-panel
-    display - see `calibrate()`."""
+    """Same values as `AnalogInputs` (kept for compatibility) - see `calibrate()`."""
 
     Ia: float
     Ib: float
@@ -127,19 +129,18 @@ class CalibratedAnalogInputs:
     phi_ia_ua: float
     phi_ib_ub: float
     phi_ic_uc: float
+    phi_ua_ub: float = 0.0
+    phi_ub_uc: float = 0.0
+    phi_uc_ua: float = 0.0
 
 
 def calibrated_current(raw_amps: float, limits: SupportedLimits, current_limit_type: int, current_limit_index: int) -> float:
-    """CONFIRMED against real hardware (mindflow.md "Step 9"): the raw
-    reading is always the true secondary-side current, unaffected by
-    which range is configured (verified directly - cycling the configured
-    range while holding a real current steady left the raw reading
-    unchanged). The front panel's calibrated value is simply
-    `raw * (configured_range_rating_A / 1A)`, "1A" being the assumed
-    standard CT secondary convention. `current_limit_type` is Mode 2's own
-    numbering (0=transformer/1=clamp/2=UPTT), matching `set_current_limits`."""
-    rating = limits.current_list_for(current_limit_type)[current_limit_index]
-    return raw_amps * rating
+    """Returns `raw_amps` unchanged (arguments kept for compatibility).
+    An earlier version scaled by the configured range as if it were a CT
+    ratio; that was wrong - the ranges are real measurement ranges (device
+    manual 4.2.3) and the reported RMS is already in amperes. See
+    mindflow.md "Step 11"."""
+    return raw_amps
 
 
 def calibrated_voltage(raw_volts: float) -> float:
@@ -151,14 +152,11 @@ def calibrated_voltage(raw_volts: float) -> float:
 
 
 def calibrate(raw: AnalogInputs, limits: SupportedLimits) -> CalibratedAnalogInputs:
-    """Convenience: apply `calibrated_current`/`calibrated_voltage` to
-    every channel of an `AnalogInputs` reading at once, using the limit
-    configuration it was taken under."""
-    rating = limits.current_list_for(raw.applied_current_limit_type)[raw.applied_current_limit_index]
+    """Copies every channel unchanged (kept for compatibility, see `calibrated_current`)."""
     return CalibratedAnalogInputs(
-        Ia=raw.Ia * rating,
-        Ib=raw.Ib * rating,
-        Ic=raw.Ic * rating,
+        Ia=raw.Ia,
+        Ib=raw.Ib,
+        Ic=raw.Ic,
         Ua=calibrated_voltage(raw.Ua),
         Ub=calibrated_voltage(raw.Ub),
         Uc=calibrated_voltage(raw.Uc),
@@ -166,6 +164,9 @@ def calibrate(raw: AnalogInputs, limits: SupportedLimits) -> CalibratedAnalogInp
         phi_ia_ua=raw.phi_ia_ua,
         phi_ib_ub=raw.phi_ib_ub,
         phi_ic_uc=raw.phi_ic_uc,
+        phi_ua_ub=raw.phi_ua_ub,
+        phi_ub_uc=raw.phi_ub_uc,
+        phi_uc_ua=raw.phi_uc_ua,
     )
 
 
@@ -283,16 +284,9 @@ class EMonDevice:
         mindflow.md "Mode coverage gap". Mode 3 is slower (up to ~3s per
         the docs) but guarantees every field we need is populated.
 
-        NOTE (confirmed against real hardware, mindflow.md "Step 4.3"):
-        Ia/Ib/Ic/Ua/Ub/Uc are the device's RAW pre-calibration RMS
-        readings, not the calibrated value shown on its own front panel -
-        e.g. a real 0.1A input read back as 0.0998 A here while the
-        device's display showed 0.998 A, because the display additionally
-        applies the device's own configured current-transformer ratio
-        (see `set_current_limits`'s current_limit_type/index) that this
-        field does not. Use `calibrate()` (or `calibrated_current()`/
-        `calibrated_voltage()` individually) to get values matching the
-        front panel - see mindflow.md "Step 9"/"Step 10"."""
+        NOTE: Ia/Ib/Ic/Ua/Ub/Uc are RMS values in amperes/volts exactly as
+        the device reports them and match its front panel; the configured
+        ranges are measurement ranges, not a ratio (mindflow.md "Step 11")."""
         payload = self._call(c.Mode.CALC_ALL)
         if len(payload) != c.RESPONSE_PAYLOAD_BYTES:
             raise EMonProtocolError(
@@ -309,6 +303,10 @@ class EMonDevice:
 
         def angle(channel: str) -> float:
             off = c.channel_block_byte_offset(channel) + c.FIELD11_ANGLE_UI_WORD_OFFSET * 2
+            return codecs.decode_signed_fixed(payload[off : off + 4], frac_bits=16, total_bits=32)
+
+        def uu_angle(channel: str) -> float:
+            off = c.channel_block_byte_offset(channel) + c.FIELD12_ANGLE_UU_WORD_OFFSET * 2
             return codecs.decode_signed_fixed(payload[off : off + 4], frac_bits=16, total_bits=32)
 
         freq_off = c.FOOTER_BYTE_OFFSET + c.FIELD33_FREQUENCY_FOOTER_WORD_OFFSET * 2
@@ -336,4 +334,7 @@ class EMonDevice:
             applied_current_limit_type=applied_current_limit_type,
             applied_current_limit_index=applied_current_limit_index,
             applied_voltage_limit_index=applied_voltage_limit_index,
+            phi_ua_ub=uu_angle("Ua"),
+            phi_ub_uc=uu_angle("Ub"),
+            phi_uc_ua=uu_angle("Uc"),
         )

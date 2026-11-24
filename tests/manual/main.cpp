@@ -8,6 +8,7 @@
 //   manual_test <port> <rs232|usb> analog
 //   manual_test <port> <rs232|usb> limits <currentLimitType> <currentLimitIndex> <voltageLimitIndex>
 //   manual_test <port> <rs232|usb> supported
+//   manual_test <port> <rs232|usb> dump <file>   (raw Mode 3 payload)
 
 #include <libavm-emon/Calibration.h>
 #include <libavm-emon/Device.h>
@@ -15,6 +16,7 @@
 
 #include <QtCore/QCoreApplication>
 #include <QtCore/QDebug>
+#include <QtCore/QFile>
 #include <QtCore/QTextStream>
 
 #include <cstdlib>
@@ -47,7 +49,7 @@ void printAnalogInputs(const avm_emon::AnalogInputs &v, const avm_emon::Supporte
 {
     const avm_emon::CalibratedAnalogInputs cal = avm_emon::calibrate(v, limits);
 
-    out << "raw (pre-calibration):" << Qt::endl;
+    out << "measured:" << Qt::endl;
     out << QString("  Ia = %1 A   Ua = %2 V   phi(Ia/Ua) = %3 deg")
                .arg(v.Ia, 0, 'f', 4).arg(v.Ua, 0, 'f', 4).arg(v.phiIaUa, 0, 'f', 4)
         << Qt::endl;
@@ -57,9 +59,11 @@ void printAnalogInputs(const avm_emon::AnalogInputs &v, const avm_emon::Supporte
     out << QString("  Ic = %1 A   Uc = %2 V   phi(Ic/Uc) = %3 deg")
                .arg(v.Ic, 0, 'f', 4).arg(v.Uc, 0, 'f', 4).arg(v.phiIcUc, 0, 'f', 4)
         << Qt::endl;
+    out << QString("  UA1-UB1 = %1 deg   UB1-UC1 = %2 deg   UC1-UA1 = %3 deg")
+               .arg(v.phiUaUb, 0, 'f', 3).arg(v.phiUbUc, 0, 'f', 3).arg(v.phiUcUa, 0, 'f', 3) << Qt::endl;
     out << QString("  frequency = %1 Hz").arg(v.frequency, 0, 'f', 4) << Qt::endl;
     out << Qt::endl;
-    out << "calibrated (matches the front panel - see md/mindflow.md \"Step 9\"):" << Qt::endl;
+    out << "calibrate() (identity, kept for compatibility - see md/mindflow.md \"Step 11\"):" << Qt::endl;
     out << QString("  Ia = %1 A   Ua = %2 V").arg(cal.Ia, 0, 'f', 4).arg(cal.Ua, 0, 'f', 4) << Qt::endl;
     out << QString("  Ib = %1 A   Ub = %2 V").arg(cal.Ib, 0, 'f', 4).arg(cal.Ub, 0, 'f', 4) << Qt::endl;
     out << QString("  Ic = %1 A   Uc = %2 V").arg(cal.Ic, 0, 'f', 4).arg(cal.Uc, 0, 'f', 4) << Qt::endl;
@@ -105,6 +109,7 @@ int usage(const char *argv0)
     err << "  " << argv0 << " <port> <rs232|usb> limits <currentLimitType> <currentLimitIndex> <voltageLimitIndex>"
         << Qt::endl;
     err << "  " << argv0 << " <port> <rs232|usb> supported" << Qt::endl;
+    err << "  " << argv0 << " <port> <rs232|usb> dump <file>" << Qt::endl;
     return 2;
 }
 
@@ -147,6 +152,20 @@ int main(int argc, char *argv[])
             avm_emon::AnalogInputs values = device.getAnalogInputs();
             avm_emon::SupportedLimits limits = device.getSupportedLimits();
             printAnalogInputs(values, limits);
+        } else if (command == QLatin1String("dump")) {
+            // Raw Mode 3 payload to a file, for offline field hunting (e.g. field 12, angle u^u).
+            if (args.size() < 5) {
+                device.disconnectDevice();
+                return usage(argv[0]);
+            }
+            const QByteArray raw = device.getAnalogInputsRaw();
+            QFile f(args[4]);
+            if (!f.open(QIODevice::WriteOnly) || f.write(raw) != raw.size()) {
+                err << "cannot write " << args[4] << Qt::endl;
+                device.disconnectDevice();
+                return 1;
+            }
+            out << "wrote " << raw.size() << " bytes to " << args[4] << Qt::endl;
         } else if (command == QLatin1String("supported")) {
             printSupportedLimits(device.getSupportedLimits());
         } else if (command == QLatin1String("limits")) {

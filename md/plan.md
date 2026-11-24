@@ -169,7 +169,7 @@ stop-bit count nobody had tried together).
       `device_type_id=3` per this unit contradicts the docs' own lookup
       table (`3 = ЭМ3.3Т`), despite the unit identifying as `EM3.1KM`. See
       `mindflow.md` "Step 8".
-- [x] 8.5 Decoded the current/voltage limits table (offset 44, variable-
+- [x] 8.5 (SUPERSEDED: the `raw_I * rating` ratio below was wrong, see `mindflow.md` "Step 11") Decoded the current/voltage limits table (offset 44, variable-
       length, terminated by `type=0`) and fully explained the "raw vs.
       front-panel-calibrated" ratio from Step 4.3: `calibrated_I = raw_I
       * (CT_rating_from_table / 1A)`, `calibrated_U = raw_U` (unscaled).

@@ -38,6 +38,12 @@ constexpr int kField5RmsWordOffset = 205;
 // not radians: see md/mindflow.md "Step 4.4".
 constexpr int kField11AngleWordOffset = 215;
 
+// Word offset of field 12 (angle between phase voltages, "u^u") inside a
+// channel block. Defined only in the U blocks: Ua block = UA1-UB1, Ub block
+// = UB1-UC1, Uc block = UC1-UA1 (degrees, signed 16.16). Found against real
+// hardware with voltages at 0/-90/-200 deg: md/mindflow.md "Step 12".
+constexpr int kField12AngleUuWordOffset = 217;
+
 // Word offset of field 33 (frequency) inside the footer. CORRECTED
 // against real hardware: the doc-derived table said 40: see
 // md/mindflow.md "Step 4.3".

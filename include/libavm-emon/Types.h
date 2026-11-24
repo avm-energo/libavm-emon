@@ -75,13 +75,11 @@ struct AVM_EMON_EXPORT SupportedLimits {
     }
 };
 
-// NOTE (md/mindflow.md "Step 4.3"): Ia/Ib/Ic/Ua/Ub/Uc are the device's raw
-// pre-calibration RMS readings, not the calibrated value its own front
-// panel displays - the panel additionally applies the configured
-// current-transformer ratio (see AppliedLimits::currentLimitType/Index),
-// which this protocol field does not. Use Calibration.h's calibrate() (or
-// calibratedCurrent()/calibratedVoltage() individually) to get values
-// matching the front panel - see md/mindflow.md "Step 9"/"Step 10".
+// Ia/Ib/Ic/Ua/Ub/Uc are RMS values in amperes/volts exactly as the device
+// reports them; they are NOT rescaled by the configured range (the ranges
+// are real measurement ranges, see Calibration.h and md/mindflow.md
+// "Step 11"). Calibration.h's calibrate() is kept for compatibility and
+// returns these values unchanged.
 struct AVM_EMON_EXPORT AnalogInputs {
     double Ia = 0, Ib = 0, Ic = 0;
     double Ua = 0, Ub = 0, Uc = 0;
@@ -99,23 +97,28 @@ struct AVM_EMON_EXPORT AnalogInputs {
     // DEGREES, not radians - confirmed against real hardware, see
     // md/mindflow.md "Step 4.4".
     double phiIaUa = 0, phiIbUb = 0, phiIcUc = 0;
+    // Angles between the first harmonics of the phase voltages, DEGREES
+    // (the device's "Углы" screen): UA1-UB1, UB1-UC1, UC1-UA1. A positive
+    // phiUaUb means UB lags UA by that angle (0/-120/-240 deg -> 120 each).
+    // Hardware-verified, md/mindflow.md "Step 12".
+    double phiUaUb = 0, phiUbUc = 0, phiUcUa = 0;
     // The limit configuration active when this reading was taken (fields
     // 45/46, footer word offsets 64/65 - CONFIRMED unshifted from the doc
     // against Mode 2's own echo, see md/mindflow.md "Step 4.2"). Needed
-    // to turn Ia/Ib/Ic/Ua/Ub/Uc into calibrated values via calibrate() -
+    // to know which range the reading was taken in (calibrate() does not need it) -
     // see md/mindflow.md "Step 9".
     std::uint16_t appliedCurrentLimitType = 0; // Mode 2 numbering: 0=transformer,1=clamp,2=UPTT
     std::uint16_t appliedCurrentLimitIndex = 0;
     std::uint16_t appliedVoltageLimitIndex = 0;
 };
 
-// AnalogInputs, scaled to match the device's own front-panel display -
-// see calibrate().
+// Same values as AnalogInputs (kept for compatibility) - see calibrate().
 struct AVM_EMON_EXPORT CalibratedAnalogInputs {
     double Ia = 0, Ib = 0, Ic = 0;
     double Ua = 0, Ub = 0, Uc = 0;
     double frequency = 0;
     double phiIaUa = 0, phiIbUb = 0, phiIcUc = 0;
+    double phiUaUb = 0, phiUbUc = 0, phiUcUa = 0;
 };
 
 } // namespace avm_emon

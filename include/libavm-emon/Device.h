@@ -3,6 +3,7 @@
 #include "emon_export.h"
 #include "Types.h"
 
+#include <QtCore/QByteArray>
 #include <QtCore/QString>
 #include <cstdint>
 #include <memory>
@@ -48,11 +49,15 @@ public:
     // Mode 15 (Read FRAM). Decodes the variable-length supported-limits
     // table (system area offset 44 onward) - see md/mindflow.md "Step 9".
     // Needed alongside AnalogInputs::appliedCurrentLimit*/
-    // appliedVoltageLimitIndex to compute calibrate()d values.
+    // appliedVoltageLimitIndex to show the active range.
     SupportedLimits getSupportedLimits();
 
     // Mode 3 (full calc, RMS + angle + frequency).
     AnalogInputs getAnalogInputs();
+
+    // Diagnostics: the undecoded Mode 3 response payload (4536 bytes), for
+    // reverse-engineering fields the library does not decode yet.
+    QByteArray getAnalogInputsRaw();
 
 private:
     QString m_portName;
