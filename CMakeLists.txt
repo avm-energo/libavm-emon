@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.18)
 
 project(libavm-emon
   DESCRIPTION "EM-3.1KM (EMon) power-quality meter protocol library for AVM-Energo projects"
-  VERSION 1.0.0)
+  VERSION 2.0.0)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
