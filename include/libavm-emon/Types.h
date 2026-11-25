@@ -83,16 +83,10 @@ struct AVM_EMON_EXPORT SupportedLimits {
 struct AVM_EMON_EXPORT AnalogInputs {
     double Ia = 0, Ib = 0, Ic = 0;
     double Ua = 0, Ub = 0, Uc = 0;
-    // Accurate to roughly +/-1-2%, NOT the precision implied by the
-    // device's own front-panel display. This is a one-shot measurement
-    // (recomputed fresh on every call, per the vendor docs' own
-    // "single/one-time calculation" framing of every Mode 3/4/5 field),
-    // with real call-to-call jitter and a small systematic low bias -
-    // confirmed against a live 50/60Hz reference and cross-checked
-    // against the front panel at a deliberately non-nominal 52.347Hz, see
-    // md/mindflow.md "Step 7". The front panel is presumably a much
-    // longer-averaged or PLL-tracked measurement of the same signal, not
-    // reflected in this field at all.
+    // Hz. Precise (about 1e-3 Hz): read from footer words 40-41, 16.16 with the
+    // high word first, hardware-verified at 50 / 55 / 52.347 Hz, see
+    // md/mindflow.md "Step 13". (Footer word 39, used in earlier versions,
+    // is coarse and reads ~1.5% low.)
     double frequency = 0;
     // DEGREES, not radians - confirmed against real hardware, see
     // md/mindflow.md "Step 4.4".

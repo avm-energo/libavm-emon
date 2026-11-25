@@ -83,16 +83,9 @@ class AnalogInputs:
     Ua: float
     Ub: float
     Uc: float
-    # Accurate to roughly +/-1-2%, NOT the precision implied by the
-    # device's own front-panel display. This is a one-shot measurement
-    # (recomputed fresh on every call, per the vendor docs' own
-    # "single/one-time calculation" framing of every Mode 3/4/5 field),
-    # with real call-to-call jitter and a small systematic low bias -
-    # confirmed against a live 50/60Hz reference and cross-checked
-    # against the front panel at a deliberately non-nominal 52.347Hz, see
-    # mindflow.md "Step 7". The front panel is presumably a much
-    # longer-averaged or PLL-tracked measurement of the same signal, not
-    # reflected in this field at all.
+    # Hz, precise to about 1e-3: footer words 40-41, 16.16 with the high word
+    # first, hardware-verified at 50 / 55 / 52.347 Hz (mindflow.md "Step 13").
+    # (Footer word 39, used in earlier versions, is coarse and ~1.5% low.)
     frequency: float
     # DEGREES, not radians - confirmed against a real inductive-load test,
     # see mindflow.md "Step 4.4". `decode_signed_fixed`'s frac_bits=16
@@ -310,7 +303,9 @@ class EMonDevice:
             return codecs.decode_signed_fixed(payload[off : off + 4], frac_bits=16, total_bits=32)
 
         freq_off = c.FOOTER_BYTE_OFFSET + c.FIELD33_FREQUENCY_FOOTER_WORD_OFFSET * 2
-        frequency = codecs.decode_ufixed(payload[freq_off : freq_off + 4], frac_bits=16)
+        # 16.16, HIGH word first (see constants.py), so swap the two words.
+        fw = payload[freq_off : freq_off + 4]
+        frequency = codecs.decode_ufixed(fw[2:4] + fw[0:2], frac_bits=16)
 
         limit45_off = c.FOOTER_BYTE_OFFSET + c.FIELD45_CURRENT_LIMIT_FOOTER_WORD_OFFSET * 2
         limit45 = int.from_bytes(payload[limit45_off : limit45_off + 2], "little")

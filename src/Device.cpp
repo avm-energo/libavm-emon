@@ -189,7 +189,9 @@ AnalogInputs Device::getAnalogInputs()
     };
 
     int freqOff = detail::kFooterByteOffset + detail::kField33FrequencyFooterWordOffset * 2;
-    double frequency = detail::decodeUFixed(payload.mid(freqOff, 4), 16);
+    // 16.16, high word first (see Constants.h): swap the words so the generic LE decoder applies.
+    QByteArray freqWords = payload.mid(freqOff, 4);
+    double frequency = detail::decodeUFixed(freqWords.mid(2, 2) + freqWords.mid(0, 2), 16);
 
     int limit45Off = detail::kFooterByteOffset + detail::kField45CurrentLimitFooterWordOffset * 2;
     std::uint16_t limit45 = readU16(payload, limit45Off);

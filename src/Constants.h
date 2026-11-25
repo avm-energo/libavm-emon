@@ -44,10 +44,12 @@ constexpr int kField11AngleWordOffset = 215;
 // hardware with voltages at 0/-90/-200 deg: md/mindflow.md "Step 12".
 constexpr int kField12AngleUuWordOffset = 217;
 
-// Word offset of field 33 (frequency) inside the footer. CORRECTED
-// against real hardware: the doc-derived table said 40: see
-// md/mindflow.md "Step 4.3".
-constexpr int kField33FrequencyFooterWordOffset = 39;
+// Word offset of field 33 (frequency) inside the footer: the DOCUMENTED
+// offset, 40. The value is a 16.16 fixed-point number stored HIGH WORD
+// FIRST (words 40 = integer part, 41 = fraction), unlike the low-word-first
+// order of the other 32-bit fields. Word 39, used before, is a coarse,
+// biased (-1.5%) value; see md/mindflow.md "Step 13".
+constexpr int kField33FrequencyFooterWordOffset = 40;
 
 // Word offsets of fields 45/46 (applied current-limit code, applied
 // voltage-limit index) inside the footer. UNSHIFTED from the doc-derived

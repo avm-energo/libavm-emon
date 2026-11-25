@@ -1283,7 +1283,7 @@ prior sessions when phases were wired but simply unloaded - e.g. Step
 in the 1-phase-2-wire configuration at the user's request - not restored
 to the earlier 3-phase-4-wire baseline.
 
-## Step 7 — Frequency (field 33) reads ~1-2% low vs. the front panel; root-caused as device-side measurement noise, not a decode bug (2026-08-26)
+## Step 7 — Frequency (field 33) reads ~1-2% low vs. the front panel; root-caused as device-side measurement noise, not a decode bug (2026-08-26) — **SUPERSEDED by Step 13: it was the wrong word**
 
 Resumed after a gap (the `retomemon`/`libavm-retom` integration projects
 happened in between - out of scope for this file, see their own repos).
@@ -1888,3 +1888,34 @@ accuracy.) Decoded as `AnalogInputs::phiUaUb/phiUbUc/phiUcUa`.
 
 Observation, not yet understood: in the I blocks the word at 217 holds
 119.35 / 120.31 / 120.32 (the currents' angles were not recorded).
+
+
+## Step 13 - Field 33 (frequency) is at footer word 40, high word first (2026-11-25)
+
+Reported again from avm-emon: RETOM at 50.000 Hz, front panel 49.999, our
+frequency 49.25. Looking at the numbers instead of the noise: with the
+signal steady the old value (footer word 39, LE 16.16) was very stable
+(49.248, 49.245, 49.248), i.e. a fixed ~-1.5% bias (50 -> 49.2475,
+55 -> 54.164), not "jitter", so the Step 7 explanation was wrong.
+
+Other sources checked first: Mode 20 (no parameters; "computes the
+fundamental frequency"; returns a bare OK after ~370 ms, changes nothing in
+Mode 3), Mode 4/5 (same routine), the rest of the footer (nothing near 50).
+Python tools could not be used on USB until baud 3000000 was set (a 9600
+probe was silent - not a device fault).
+
+Then Mode 9 (read RAM; 64 unique pages of 8192 words, the page number wraps
+at 64) was dumped at 50 Hz and at 55 Hz and the two diffed for words that
+moved from ~50 to ~55 in many number formats. The only convincing hit was
+page 15 (the Mode 3 output buffer itself): footer words 40-41 =
+`0x0031 0xFFF7` (50 Hz) and `0x0036 0xFFF1` (55 Hz). Read 16.16 with the
+HIGH WORD FIRST: 49.99986 and 54.99977. Five Mode 3 reads at 55 Hz gave
+54.99973..54.99989; at a non-integer 52.347 Hz four reads gave
+52.34686..52.34689 (old word-39 value: 52.206). So the doc's offset 40 was
+right all along; Step 4.3 "corrected" it to 39 only because the coarse value
+there happened to be near 50. The old low word (39) is the fraction of
+another field (word 38 is 0xFFFF); its meaning is unknown.
+
+Implemented: `kField33FrequencyFooterWordOffset = 40`, words swapped before
+decoding (C++ and Python). Also noticed: other footer 32-bit fields (e.g.
+fields 30-32 at words 34-39) may be high-word-first too - not investigated.

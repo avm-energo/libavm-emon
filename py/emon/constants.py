@@ -60,18 +60,12 @@ FIELD11_ANGLE_UI_WORD_OFFSET = 215
 # Ub block = UB1-UC1, Uc block = UC1-UA1; degrees, signed 16.16. Found with
 # voltages at 0/-90/-200 deg - mindflow.md "Step 12".
 FIELD12_ANGLE_UU_WORD_OFFSET = 217
-# Word offset of field 33 ("частота") inside the footer section.
-#
-# CORRECTED against real hardware (md/mindflow.md "Step 4.3"): scanning
-# the footer of a live capture (50Hz nominal AC reference on phase A) for
-# a plausible frequency found it one word *earlier* than documented, at
-# footer word 39 (unsigned, frac_bits=16) -> 49.44 Hz - a very different,
-# opposite-direction shift from field 5's, so likely an independent
-# transcription error in the doc's footer field list, not the same root
-# cause. ~1% off nominal 50Hz, plausible for real bench-source tolerance
-# and far better than every neighboring offset (which read as raw
-# 0xFFFF-ish flag/status words, not anything frequency-shaped).
-FIELD33_FREQUENCY_FOOTER_WORD_OFFSET = 39
+# Word offset of field 33 ("частота") inside the footer: the DOCUMENTED offset,
+# 40. The value is 16.16 fixed point stored HIGH WORD FIRST (word 40 = integer
+# part, 41 = fraction), unlike the low-word-first order of other 32-bit
+# fields. Word 39, used before, is a coarse, biased (-1.5%) value - see
+# md/mindflow.md "Step 13".
+FIELD33_FREQUENCY_FOOTER_WORD_OFFSET = 40
 
 # Word offsets of fields 45/46 (applied current-limit code, applied
 # voltage-limit index) inside the footer. UNSHIFTED from the doc-derived
