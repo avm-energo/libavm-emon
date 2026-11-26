@@ -38,3 +38,5 @@ ui_*.h
 *.vcxproj.filters
 *.vcxproj.user
 CMakeLists.txt.user*
+
+/emon/
